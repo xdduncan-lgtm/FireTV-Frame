@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atelier</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- Art Mode: what's on the wall -->
+<div id="art" class="layer">
+  <div class="stage" id="stageA"></div>
+  <div class="stage" id="stageB"></div>
+  <div id="matte"></div>
+  <div id="bezel"></div>
+  <div id="tone"></div>
+  <div id="dim"></div>
+  <div id="empty" class="hidden">
+    <div class="empty-title">Your wall is ready</div>
+    <div class="empty-text">Connect to the internet to browse free collections, or send photos from your phone. Press OK to open the menu.</div>
+  </div>
+  <div id="caption"><div class="cap-title"></div><div class="cap-meta"></div></div>
+</div>
+
+<!-- Menu -->
+<div id="menu" class="layer hidden">
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark"></span>Art Mode</div>
+    <nav class="tabs">
+      <button class="tab focusable" data-tab="store">Art Store</button>
+      <button class="tab focusable" data-tab="photos">My Photos</button>
+      <button class="tab focusable" data-tab="favorites">Favourites</button>
+      <button class="tab focusable" data-tab="settings">Settings</button>
+    </nav>
+    <div class="clock" id="clock"></div>
+  </header>
+  <main id="panel"></main>
+  <footer class="hints">
+    <span><b>◀ ▶ ▲ ▼</b> Move</span><span><b>OK</b> Select</span><span><b>Back</b> Return to art</span><span><b>▶❚❚</b> Pause slideshow</span>
+  </footer>
+</div>
+
+<!-- Artwork detail / preview -->
+<div id="detail" class="layer hidden">
+  <div class="d-preview">
+    <div class="wall"><div class="tv"><div id="pv" class="pv"></div></div></div>
+  </div>
+  <div class="d-info">
+    <div class="d-source"></div>
+    <h1 class="d-title"></h1>
+    <div class="d-artist"></div>
+    <div class="d-date"></div>
+    <div class="d-actions">
+      <button class="btn primary focusable" id="dShow">Display on wall</button>
+      <button class="btn focusable" id="dFav">Add to favourites</button>
+      <div class="stepper focusable" id="dMat" tabindex="-1"></div>
+      <div class="stepper focusable" id="dColor" tabindex="-1"></div>
+      <button class="btn danger focusable" id="dDel">Delete photo</button>
+    </div>
+  </div>
+</div>
+
+<div id="sleep" class="layer hidden"></div>
+<div id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
