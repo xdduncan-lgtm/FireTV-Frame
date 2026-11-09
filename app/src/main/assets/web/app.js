@@ -31,6 +31,7 @@
 
   /* ---------------- Catalogue ---------------- */
   var MAT_STYLES = [
+    { id: 'smart', name: 'Auto (fits each picture)' },
     { id: 'none', name: 'None' },
     { id: 'modern', name: 'Modern' },
     { id: 'shadowbox', name: 'Shadowbox' },
@@ -39,6 +40,7 @@
     { id: 'mix', name: 'Mix' }
   ];
   var MAT_COLORS = [
+    { id: 'auto', name: 'Auto (from art)', c: '#e2dbcd' },
     { id: 'warm', name: 'Warm white', c: '#ece6da' },
     { id: 'polar', name: 'Polar', c: '#f2f4f5' },
     { id: 'antique', name: 'Antique', c: '#dccfb6' },
@@ -72,15 +74,31 @@
 
   var DEFAULTS = {
     brightness: 7, tone: 0, interval: 0, playFrom: 'current', order: 'sequential', showInfo: true,
-    mat: 'modern', matColor: 'warm', bezel: 'none', texture: true, sleepAfter: 4, nightMode: false
+    mat: 'smart', matColor: 'auto', matBright: 6, matWidth: 'standard', bezel: 'none', texture: true, sleepAfter: 4, nightMode: false
   };
 
   /* ---------------- State ---------------- */
+  // v2: switch existing installs to the softer auto-coloured mat.
+  var savedSettings = store.get('settings', {}), savedMats = store.get('matByArt', {});
+  if (!savedSettings.v3) {
+    delete savedSettings.mat;
+    savedSettings.v3 = true;
+    Object.keys(savedMats).forEach(function (k) { delete savedMats[k].mat; });
+  }
+  if (!savedSettings.v2) {
+    delete savedSettings.matColor;
+    savedSettings.v2 = true;
+    Object.keys(savedMats).forEach(function (k) { delete savedMats[k].color; });
+    store.set('settings', savedSettings);
+    store.set('matByArt', savedMats);
+  }
+
   var S = {
-    settings: Object.assign({}, DEFAULTS, store.get('settings', {})),
+    settings: Object.assign({}, DEFAULTS, savedSettings),
     favorites: store.get('favorites', []),
-    matByArt: store.get('matByArt', {}),
+    matByArt: savedMats,
     current: store.get('current', null),
+    bad: {}, stepFrom: null, stepTries: 0,
     ctx: store.get('ctx', { list: [], name: '' }),
     cache: store.get('cache', {}),
     photos: [],
@@ -220,17 +238,26 @@
   function collectionById(id) { return COLLECTIONS.filter(function (c) { return c.id === id; })[0]; }
 
   /* ---------------- Images & composition ---------------- */
-  function loadImg(src, alt) {
+  // Tries each source in turn (full size, medium, thumbnail); fails only if all of them fail.
+  function loadImg() {
+    var srcs = [];
+    Array.prototype.slice.call(arguments).forEach(function (u) { if (u && srcs.indexOf(u) < 0) srcs.push(u); });
     return new Promise(function (resolve, reject) {
-      var im = new Image(), triedAlt = false;
-      var t = setTimeout(function () { reject(new Error('timeout')); }, 45000);
-      im.onload = function () { clearTimeout(t); resolve(im); };
-      im.onerror = function () {
-        if (alt && !triedAlt && alt !== src) { triedAlt = true; im.src = alt; }
-        else { clearTimeout(t); reject(new Error('load')); }
-      };
-      im.decoding = 'async';
-      im.src = src;
+      var i = 0;
+      function attempt() {
+        if (i >= srcs.length) { reject(new Error('load')); return; }
+        var im = new Image(), done = false;
+        var t = setTimeout(function () { if (!done) { done = true; im.src = ''; i++; attempt(); } }, 20000);
+        im.onload = function () {
+          if (done) return;
+          done = true; clearTimeout(t);
+          if (im.naturalWidth < 2) { i++; attempt(); } else resolve(im);
+        };
+        im.onerror = function () { if (done) return; done = true; clearTimeout(t); i++; attempt(); };
+        im.decoding = 'async';
+        im.src = srcs[i];
+      }
+      attempt();
     });
   }
   function asMain(im) { return { src: im.src, w: im.naturalWidth || 1600, h: im.naturalHeight || 1000 }; }
@@ -246,19 +273,99 @@
   function fit(aw, ah, mw, mh) { var s = Math.min(mw / aw, mh / ah); return { w: aw * s, h: ah * s }; }
   function cssUrl(src) { return 'url("' + String(src).replace(/"/g, '%22') + '")'; }
 
+  /* Auto mat colour: a muted tone sampled from the artwork itself. */
+  var toneCache = {};
+  function hslHex(hh, ss, ll) {
+    function f(n) {
+      var k = (n + hh / 30) % 12, a = ss * Math.min(ll, 1 - ll);
+      var c = ll - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+      return ('0' + Math.round(c * 255).toString(16)).slice(-2);
+    }
+    return '#' + f(0) + f(8) + f(4);
+  }
+  function mutedFrom(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    var mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn, s = 0, hh = 40;
+    if (d) {
+      s = d / (1 - Math.abs(2 * l - 1));
+      if (mx === r) hh = ((g - b) / d) % 6; else if (mx === g) hh = (b - r) / d + 2; else hh = (r - g) / d + 4;
+      hh *= 60; if (hh < 0) hh += 360;
+    }
+    // Light, low-saturation paper tone; very dark art gets a deep charcoal-toned mat instead.
+    return l < 0.2 ? hslHex(hh, Math.min(s * 0.3, 0.12), 0.17) : hslHex(hh, Math.min(s * 0.5, 0.24), 0.82);
+  }
+  function autoMatColor(art) {
+    if (toneCache[art.id]) return Promise.resolve(toneCache[art.id]);
+    return new Promise(function (resolve) {
+      var im = new Image(), done = false;
+      var t = setTimeout(function () { fin(null); }, 8000);
+      function fin(c) {
+        if (done) return;
+        done = true; clearTimeout(t);
+        if (c) toneCache[art.id] = c;
+        resolve(c || '#e2dbcd');
+      }
+      im.crossOrigin = 'anonymous';
+      im.onload = function () {
+        try {
+          var c = document.createElement('canvas'); c.width = c.height = 24;
+          var x = c.getContext('2d'); x.drawImage(im, 0, 0, 24, 24);
+          var d = x.getImageData(0, 0, 24, 24).data, r = 0, g = 0, b = 0, n = 0;
+          for (var i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; n++; }
+          fin(mutedFrom(r / n, g / n, b / n));
+        } catch (e) { fin(null); }
+      };
+      im.onerror = function () { fin(null); };
+      im.src = art.thumb;
+    });
+  }
+  function resolveCfg(art) {
+    var cfg = matFor(art);
+    if (cfg.color !== 'auto') return Promise.resolve(cfg);
+    return autoMatColor(art).then(function (hx) { cfg.hex = hx; return cfg; });
+  }
+  var WIDTHS = { slim: 0.08, standard: 0.115, wide: 0.165 };
+
   /* Lays out one artwork (or three for "mix") on a mat inside `el`, like a real framed print. */
   function compose(el, main, cfg, extras) {
     var W = el.clientWidth || window.innerWidth, H = el.clientHeight || window.innerHeight;
+    var mw = WIDTHS[S.settings.matWidth] || WIDTHS.standard, grow;
     var mat = cfg.mat;
+    var dpr = window.devicePixelRatio || 1;
+    // Largest size a picture can be shown without visible blur (1.5x its own pixels).
+    function sharpFit(maxW, maxH) {
+      var f0 = fit(main.w, main.h, maxW, maxH), cap = (main.w * 1.5) / dpr;
+      if (f0.w > cap) f0 = { w: cap, h: cap * main.h / main.w };
+      return f0;
+    }
+    if (mat === 'smart') {
+      var arS = main.w / main.h, screenAr = W / H, bias = { slim: 0.75, standard: 1, wide: 1.35 }[S.settings.matWidth] || 1;
+      if (Math.abs(arS - screenAr) < 0.12 && main.w >= 1200) {
+        mat = 'modern'; mw = 0.055 * bias;              // TV-shaped: thin border, nearly full screen
+      } else if (arS < 0.95) {
+        mat = 'modern'; mw = 0.06 * bias;               // portrait: use the full height
+      } else if (arS > 2.1) {
+        mat = 'modern'; mw = 0.07 * bias;               // panorama: use the full width
+      } else {
+        mat = 'modern'; mw = 0.095 * bias;              // landscape / square
+      }
+    }
     if (mat === 'mix' && !(extras && extras.length >= 2)) mat = 'modern';
-    var col = matHex(cfg.color);
+    var col = cfg.hex || matHex(cfg.color);
+    grow = 0.115 - mw;
     el.innerHTML = '';
     el.style.fontSize = (H / 100) + 'px';
     el.style.backgroundColor = mat === 'none' ? '#000' : col;
-    if (mat !== 'none') el.appendChild(h('div', 'paper'));
+    if (mat !== 'none') {
+      el.appendChild(h('div', 'paper'));
+      // Dims only the mat and adds soft room light, so it reads as paper rather than a glowing screen.
+      var light = h('div', 'mat-light');
+      light.style.backgroundColor = 'rgba(0,0,0,' + ((10 - S.settings.matBright) * 0.065) + ')';
+      el.appendChild(light);
+    }
 
-    var bev = Math.max(1, Math.round(H * 0.0045));
-    var core = isDark(col) ? 'rgba(255,255,255,.20)' : '#fbfaf6';
+    var bev = Math.max(2, Math.round(H * 0.007));
+    var core = isDark(col) ? 'rgba(255,255,255,.22)' : '#f4efe3';
     function ap(x, y, w, ht, src, extra) {
       var d = h('div', 'aperture');
       d.style.cssText = 'left:' + x + 'px;top:' + y + 'px;width:' + w + 'px;height:' + ht +
@@ -278,21 +385,21 @@
         ap(0, 0, W, H, main.src);
         break;
       case 'shadowbox':
-        m = H * 0.10;
-        f = fit(main.w, main.h, W - 2 * m, H - 2 * m);
+        m = H * (mw - 0.015);
+        f = sharpFit(W - 2 * m, H - 2 * m);
         d = ap((W - f.w) / 2, (H - f.h) / 2, f.w, f.h, main.src);
         d.style.boxShadow = '0 ' + (H * 0.014) + 'px ' + (H * 0.045) + 'px rgba(0,0,0,.45), 0 ' +
           (H * 0.004) + 'px ' + (H * 0.008) + 'px rgba(0,0,0,.35)';
         el.appendChild(h('div', 'box-depth'));
         break;
       case 'panoramic':
-        var pw = W * 0.84, ph = pw / 2.6;
+        var pw = W * (0.84 + grow), ph = pw / 2.6;
         if (ph > H * 0.56) { ph = H * 0.56; pw = ph * 2.6; }
         bevel(ap((W - pw) / 2, (H - ph) / 2, pw, ph, main.src));
         break;
       case 'triptych':
         var ar = Math.max(main.w / main.h, 1.5);
-        f = fit(ar, 1, W * 0.84, H * 0.7);
+        f = fit(ar, 1, W * (0.84 + grow), H * (0.7 + grow));
         var g = W * 0.022, panel = (f.w - 2 * g) / 3, x0 = (W - f.w) / 2, y0 = (H - f.h) / 2;
         var sc = Math.max(f.w / main.w, f.h / main.h), bw = main.w * sc, bh = main.h * sc;
         var ox = (f.w - bw) / 2, oy = (f.h - bh) / 2;
@@ -303,15 +410,15 @@
         }
         break;
       case 'mix':
-        m = H * 0.085;
+        m = H * (mw - 0.03);
         var gap = H * 0.04, aw = W - 2 * m - gap, ah = H - 2 * m, lw = aw * 0.6, rw = aw - lw, rh = (ah - gap) / 2;
         bevel(ap(m, m, lw, ah, main.src));
         bevel(ap(m + lw + gap, m, rw, rh, extras[0].src));
         bevel(ap(m + lw + gap, m + rh + gap, rw, rh, extras[1].src));
         break;
       default: // modern
-        m = H * 0.13;
-        f = fit(main.w, main.h, W - 2 * m, H - 2 * m);
+        m = H * mw;
+        f = sharpFit(W - 2 * m, H - 2 * m);
         bevel(ap((W - f.w) / 2, (H - f.h) / 2, f.w, f.h, main.src));
     }
   }
@@ -337,7 +444,7 @@
     }
     if (picks.length < 2) return Promise.resolve(null);
     return Promise.all(picks.map(function (a) {
-      return useThumb ? loadImg(a.thumb, a.full) : loadImg(a.full, a.alt || a.thumb);
+      return useThumb ? loadImg(a.thumb, a.alt, a.full) : loadImg(a.full, a.alt, a.thumb);
     })).then(function (ims) { return ims.map(asMain); }).catch(function () { return null; });
   }
 
@@ -347,14 +454,16 @@
   function showArt(art, opts) {
     opts = opts || {};
     if (!art) return Promise.resolve();
-    var token = ++S.showSeq;
-    var cfg = matFor(art);
-    return loadImg(art.full, art.alt || art.thumb).then(function (im) {
-      if (token !== S.showSeq) return;
+    var token = ++S.showSeq, cfg;
+    return resolveCfg(art).then(function (c) {
+      cfg = c;
+      return loadImg(art.full, art.alt, art.thumb);
+    }).then(function (im) {
+      if (token !== S.showSeq) return false;
       var main = asMain(im);
       var extrasP = cfg.mat === 'mix' ? extrasFor(art, playlist(), false) : Promise.resolve(null);
       return extrasP.then(function (extras) {
-        if (token !== S.showSeq) return;
+        if (token !== S.showSeq) return false;
         var back = S.front === stageA ? stageB : stageA, old = S.front;
         back.classList.toggle('instant', !!opts.instant);
         back.classList.remove('show');
@@ -369,14 +478,32 @@
         store.set('current', art);
         $('#empty').classList.add('hidden');
         if (!opts.quiet) showCaption(art);
+        delete S.bad[art.id];
         scheduleSlideshow();
+        preloadNext();
+        return true;
       });
     }).catch(function () {
-      if (token !== S.showSeq) return;
-      toast('“' + art.title + '” could not be loaded. Skipping it.');
-      if (opts.fromSlideshow) setTimeout(function () { step(1, true); }, 4000);
-      else scheduleSlideshow();
+      if (token !== S.showSeq) return false;
+      S.bad[art.id] = true;
+      if (!opts.inStep) {
+        toast('“' + art.title + '” couldn’t be loaded.');
+        scheduleSlideshow();
+      }
+      return false;
     });
+  }
+
+  // Warms the cache with the next picture so changes are instant, and finds broken ones early.
+  function preloadNext() {
+    var l = playlist(), i = indexIn(l, S.current);
+    if (l.length < 2) return;
+    var a = l[(i + 1) % l.length];
+    if (a && !S.bad[a.id]) loadImg(a.full, a.alt, a.thumb).catch(function () { S.bad[a.id] = true; });
+  }
+  function indexIn(l, art) {
+    for (var k = 0; k < l.length; k++) if (art && l[k].id === art.id) return k;
+    return -1;
   }
 
   function rerenderCurrent() { if (S.current) showArt(S.current, { instant: true, quiet: true }); }
@@ -391,20 +518,36 @@
     return l || [];
   }
 
+  // Moves to the next/previous picture, skipping any that won't load.
   function step(dir, auto) {
     var l = playlist();
     if (!l.length) { toast('Nothing to play yet. Choose art from the menu.'); return; }
-    var i = -1;
-    for (var k = 0; k < l.length; k++) if (S.current && l[k].id === S.current.id) i = k;
-    if (auto && S.settings.order === 'shuffle' && l.length > 1) {
-      var j; do { j = Math.floor(Math.random() * l.length); } while (j === i);
-      i = j;
-    } else if (i < 0) {
-      i = dir > 0 ? 0 : l.length - 1;
+    var usable = l.filter(function (a) { return !S.bad[a.id]; });
+    if (!usable.length) { S.bad = {}; usable = l; }   // everything failed once: try them all again
+    var from = S.stepFrom || S.current, i = indexIn(l, from), pick = null;
+
+    if (auto && S.settings.order === 'shuffle' && usable.length > 1) {
+      var pool = usable.filter(function (a) { return !(S.current && a.id === S.current.id); });
+      pick = pool[Math.floor(Math.random() * pool.length)];
     } else {
-      i = (i + dir + l.length) % l.length;
+      if (i < 0) i = dir > 0 ? -1 : l.length;
+      for (var n = 1; n <= l.length; n++) {
+        var cand = l[((i + dir * n) % l.length + l.length) % l.length];
+        if (!S.bad[cand.id]) { pick = cand; break; }
+      }
     }
-    showArt(l[i], { fromSlideshow: !!auto });
+    if (!pick) return;
+    var tries = (S.stepTries || 0) + 1;
+    S.stepFrom = pick;
+    S.stepTries = tries;
+    showArt(pick, { inStep: true }).then(function (ok) {
+      if (ok) { S.stepFrom = null; S.stepTries = 0; if (tries > 1) toast('Skipped a picture that couldn’t be loaded'); return; }
+      if (S.stepFrom !== pick) return;          // the viewer already moved on
+      if (tries < 8 && !(usable.length === 1)) { step(dir, auto); return; }
+      S.stepFrom = null; S.stepTries = 0;
+      toast('These pictures couldn’t be loaded. Check the internet connection.');
+      scheduleSlideshow();
+    });
   }
 
   function scheduleSlideshow() {
@@ -823,7 +966,10 @@
     { group: 'Mats' },
     { key: 'mat', label: 'Default mat style', hint: 'Used for art without its own mat', values: MAT_STYLES.map(function (m) { return m.id; }),
       fmt: function (v) { return MAT_STYLES.filter(function (m) { return m.id === v; })[0].name; } },
-    { key: 'matColor', label: 'Default mat colour', swatch: true, values: MAT_COLORS.map(function (m) { return m.id; }),
+    { key: 'matBright', label: 'Mat brightness', hint: 'Dims the mat without dimming the art', values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], clamp: true, bar: true, fmt: String },
+    { key: 'matWidth', label: 'Mat width', values: ['slim', 'standard', 'wide'],
+      fmt: function (v) { return { slim: 'Slim', standard: 'Standard', wide: 'Wide' }[v]; } },
+    { key: 'matColor', label: 'Default mat colour', hint: 'Auto picks a soft tone from each picture', swatch: true, values: MAT_COLORS.map(function (m) { return m.id; }),
       fmt: function (v) { return MAT_COLORS.filter(function (m) { return m.id === v; })[0].name; } },
     { group: 'Slideshow' },
     { key: 'interval', label: 'Change every', values: [0, 3, 10, 30, 60, 180, 720, 1440], fmt: fmtInterval },
@@ -856,7 +1002,11 @@
         for (var i = 1; i <= 10; i++) bar.appendChild(h('i', i <= val ? 'on' : ''));
         v.appendChild(bar);
       }
-      if (def.swatch) { var sw = h('span', 'swatch'); sw.style.background = matHex(val); v.appendChild(sw); }
+      if (def.swatch) {
+        var sw = h('span', 'swatch');
+        sw.style.background = val === 'auto' ? 'linear-gradient(135deg,#e2b38e,#ece6da 45%,#a7c1b4 75%,#b3aac5)' : matHex(val);
+        v.appendChild(sw);
+      }
       v.appendChild(document.createTextNode(def.fmt(val)));
       r.appendChild(v);
       r.appendChild(h('span', 'arr', '›'));
@@ -887,7 +1037,7 @@
           S.settings[def.key] = v;
           saveSettings();
           applyDisplay();
-          if (def.key === 'mat' || def.key === 'matColor') rerenderCurrent();
+          if (/^mat/.test(def.key)) rerenderCurrent();
           if (def.key === 'interval' || def.key === 'playFrom') scheduleSlideshow();
         }));
     });
@@ -960,9 +1110,11 @@
     }
   }
   function renderPreview() {
-    var d = S.detail, art = d.art, pv = $('#pv'), token = ++S.pvSeq, cfg = matFor(art);
-    var ex = cfg.mat === 'mix' ? extrasFor(art, d.list, true) : Promise.resolve(null);
-    ex.then(function (extras) {
+    var d = S.detail, art = d.art, pv = $('#pv'), token = ++S.pvSeq, cfg;
+    resolveCfg(art).then(function (c) {
+      cfg = c;
+      return cfg.mat === 'mix' ? extrasFor(art, d.list, true) : null;
+    }).then(function (extras) {
       loadImg(art.thumb, art.full).then(function (im) {
         if (token === S.pvSeq) compose(pv, asMain(im), cfg, extras);
         return loadImg(art.full, art.alt);
@@ -1087,8 +1239,7 @@
   }
 
   function artKey(k) {
-    if (k === 'left') step(-1);
-    else if (k === 'right') step(1);
+    if (k === 'left' || k === 'right') { S.stepFrom = null; S.stepTries = 0; step(k === 'left' ? -1 : 1); }
     else if (k === 'down') showCaption(S.current, true);
     else if (k === 'ok' || k === 'up' || k === 'menu') openMenu();
   }
@@ -1123,7 +1274,7 @@
     refreshPhotos();
     tickClock();
     if (S.current) {
-      showArt(S.current, { instant: true });
+      showArt(S.current, { instant: true, inStep: true }).then(function (ok) { if (!ok) step(1); });
       return;
     }
     // First run: hang something beautiful, then open the Art Store.
