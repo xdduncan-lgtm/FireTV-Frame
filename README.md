@@ -8,13 +8,13 @@ the Art Institute of Chicago, the Cleveland Museum of Art and The Metropolitan M
 ## Build the APK with GitHub (no software needed)
 
 1. Create a free GitHub account and a new **public** repository.
-2. On the repository page choose "uploading an existing file" and drag in everything inside this `Atelier` folder (not the folder itself). On a Mac, press Cmd+Shift+. in Finder so the hidden `.github` folder is visible and gets uploaded too.
+2. On the repository page choose "uploading an existing file" and drag in everything from the unzipped folder. On a Mac, press Cmd+Shift+. in Finder so the hidden `.github` folder is visible and gets uploaded too.
 3. Commit. The Actions tab shows the build running (about 4 minutes).
 4. The finished APK is always at:
    `https://github.com/YOUR-USERNAME/YOUR-REPO/releases/latest/download/Atelier.apk`
 5. On the Fire TV, open the Downloader app, type that address, and install.
 
-Each GitHub build is signed with a fresh key, so uninstall the old version before installing a newer build.
+Every build is signed with the same key (app/atelier.keystore), so new builds install straight over the old one.
 
 ## Build the APK with Android Studio
 

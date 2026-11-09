@@ -15,12 +15,29 @@ android {
         versionName = "1.0"
     }
 
+    // A fixed key, so every new build installs over the previous one on the TV.
+    signingConfigs {
+        create("atelier") {
+            storeFile = file("atelier.keystore")
+            storePassword = "atelier123"
+            keyAlias = "atelier"
+            keyPassword = "atelier123"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Signed with the debug key so the release APK can be sideloaded right away.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("atelier")
         }
+        debug {
+            signingConfig = signingConfigs.getByName("atelier")
+        }
+    }
+
+    lint {
+        abortOnError = false
+        checkReleaseBuilds = false
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

@@ -38,7 +38,7 @@ class ArtBridge(private val ctx: Context, private val web: WebView, private val 
     fun httpGet(id: Int, url: String) {
         pool.execute {
             var ok = false
-            var body = ""
+            var body: String
             try {
                 val u = URL(url)
                 if (u.protocol != "https") throw IOException("Only https is allowed")
