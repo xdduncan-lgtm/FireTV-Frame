@@ -58,9 +58,12 @@ class MainActivity : ComponentActivity(), ArtBridge.Host {
         super.onResume()
         web.onResume()
         hideSystemBars()
+        web.evaluateJavascript("window.onAppResume && window.onAppResume()", null)
     }
 
     override fun onPause() {
+        // Stop Atelier's own music so it never plays behind other apps.
+        web.evaluateJavascript("window.onAppPause && window.onAppPause()", null)
         web.onPause()
         super.onPause()
     }

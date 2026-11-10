@@ -1,6 +1,7 @@
 package com.atelier.artmode
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.Handler
@@ -107,6 +108,20 @@ class ArtBridge(private val ctx: Context, private val web: WebView, private val 
             "data:image/png;base64," + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
         } catch (e: Exception) {
             ""
+        }
+    }
+
+    /** Opens another app (Spotify, Amazon Music, Apple Music). Returns false if it isn't installed. */
+    @JavascriptInterface
+    fun launchApp(pkg: String): Boolean {
+        val pm = ctx.packageManager
+        val intent = pm.getLeanbackLaunchIntentForPackage(pkg) ?: pm.getLaunchIntentForPackage(pkg) ?: return false
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return try {
+            ctx.startActivity(intent)
+            true
+        } catch (e: Exception) {
+            false
         }
     }
 

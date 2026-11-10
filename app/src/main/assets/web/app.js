@@ -76,7 +76,8 @@
 
   var DEFAULTS = {
     brightness: 7, tone: 0, interval: 0, playFrom: 'current', order: 'sequential', showInfo: true,
-    mat: 'smart', matColor: 'auto', matBright: 6, matWidth: 'standard', bezel: 'none', texture: true, sleepAfter: 4, nightMode: false
+    mat: 'smart', fillOnly: 0, musicSource: 'off', musicStyle: 'classical', musicVolume: 4, musicAnnounce: true, musicApp: '',
+    matColor: 'auto', matBright: 6, matWidth: 'standard', bezel: 'none', texture: true, sleepAfter: 4, nightMode: false
   };
 
   /* ---------------- State ---------------- */
@@ -107,7 +108,8 @@
     current: store.get('current', null),
     bad: {}, dead: store.get('dead', {}), stepFrom: null, stepTries: 0,
     ctx: store.get('ctx', { list: [], name: '' }),
-    cache: store.get('cache', {}),
+    cache: store.get('cache2', {}),
+    aspect: store.get('aspect', {}),
     photos: [],
     menuOpen: false, detailOpen: false, sleeping: false, paused: false,
     tab: 'store', sub: null, detail: null, returnFocus: null,
@@ -126,9 +128,30 @@
     }
     if (list) for (var i = list.length - 1; i >= 0; i--) if (list[i].id === art.id) list.splice(i, 1);
   }
+  // "Only pictures that fill the screen": hides art that would need more than the chosen crop.
+  function screenAr() { return (window.innerWidth || 16) / (window.innerHeight || 9); }
+  function cropLoss(ar) { var sc = screenAr(); return 1 - Math.min(ar, sc) / Math.max(ar, sc); }
+  function arOf(a) { return a.ar || S.aspect[a.id] || 0; }
+  function fits(a) {
+    var tol = S.settings.fillOnly;
+    if (!tol || !a) return true;
+    var ar = arOf(a);
+    return !ar || cropLoss(ar) <= tol / 100;
+  }
+  function shown(a) { return alive(a) && fits(a); }
+  function noteAspect(a, w, h) {
+    if (!a || !w || !h || a.ar) return;
+    S.aspect[a.id] = w / h;
+    clearTimeout(noteAspect.t);
+    noteAspect.t = setTimeout(function () {
+      var k = Object.keys(S.aspect);
+      if (k.length > 4000) k.slice(0, k.length - 4000).forEach(function (x) { delete S.aspect[x]; });
+      store.set('aspect', S.aspect);
+    }, 2000);
+  }
   function saveSettings() { store.set('settings', S.settings); }
   function saveFavs() { store.set('favorites', S.favorites); }
-  function saveCache() { store.set('cache', S.cache); }
+  function saveCache() { store.set('cache2', S.cache); }
 
   /* ---------------- Networking ---------------- */
   var pending = {}, fetchSeq = 0;
@@ -164,8 +187,8 @@
 
   function aicSearch(q, limit) {
     var url = 'https://api.artic.edu/api/v1/artworks/search?q=' + enc(q) +
-      '&query%5Bterm%5D%5Bis_public_domain%5D=true&limit=' + (limit || 40) +
-      '&fields=id,title,artist_title,artist_display,date_display,image_id';
+      '&query%5Bterm%5D%5Bis_public_domain%5D=true&limit=' + (limit || 80) +
+      '&fields=id,title,artist_title,artist_display,date_display,image_id,thumbnail';
     return getJSON(url).then(function (j) {
       var base = (j.config && j.config.iiif_url) || 'https://www.artic.edu/iiif/2';
       return (j.data || []).filter(function (d) { return d.image_id; }).map(function (d) {
@@ -174,7 +197,8 @@
           id: 'aic:' + d.id, title: d.title || 'Untitled',
           artist: d.artist_title || cleanArtist(d.artist_display) || 'Unknown artist',
           date: d.date_display || '', source: 'Art Institute of Chicago',
-          thumb: img + '400,/0/default.jpg', full: img + '1686,/0/default.jpg', alt: img + '843,/0/default.jpg'
+          thumb: img + '400,/0/default.jpg', full: img + '1686,/0/default.jpg', alt: img + '843,/0/default.jpg',
+          ar: (d.thumbnail && d.thumbnail.width && d.thumbnail.height) ? d.thumbnail.width / d.thumbnail.height : 0
         };
       });
     });
@@ -182,7 +206,7 @@
 
   function cmaSearch(q, type, limit) {
     var url = 'https://openaccess-api.clevelandart.org/api/artworks/?q=' + enc(q) +
-      '&cc0=1&has_image=1&limit=' + (limit || 40) + (type ? '&type=' + enc(type) : '');
+      '&cc0=1&has_image=1&limit=' + (limit || 80) + (type ? '&type=' + enc(type) : '');
     return getJSON(url).then(function (j) {
       return (j.data || []).filter(function (d) { return d.images && d.images.web && d.images.web.url; }).map(function (d) {
         var im = d.images, c = d.creators && d.creators[0];
@@ -191,7 +215,8 @@
           id: 'cma:' + d.id, title: d.title || 'Untitled',
           artist: (c && cleanArtist(c.description)) || culture || 'Unknown artist',
           date: d.creation_date || '', source: 'Cleveland Museum of Art',
-          thumb: im.web.url, full: (im.print && im.print.url) || im.web.url, alt: im.web.url
+          thumb: im.web.url, full: (im.print && im.print.url) || im.web.url, alt: im.web.url,
+          ar: (+im.web.width && +im.web.height) ? im.web.width / im.web.height : 0
         };
       });
     });
@@ -248,7 +273,7 @@
     if (hit && hit.items && hit.items.length && Date.now() - hit.t < 3 * 864e5) return Promise.resolve(hit.items.filter(alive));
     return Promise.all(c.sources.map(function (s) { return runSource(s).catch(function () { return []; }); }))
       .then(function (lists) {
-        var items = interleave(lists, 60).filter(alive).slice(0, 48);
+        var items = interleave(lists, 120).filter(alive).slice(0, 90);
         if (items.length) { S.cache[c.id] = { t: Date.now(), items: items }; saveCache(); return items; }
         return hit && hit.items ? hit.items.filter(alive) : [];
       });
@@ -360,7 +385,8 @@
     // otherwise show it whole over a blurred, dimmed copy of itself.
     if (mat === 'smart') {
       var arS = main.w / main.h, scr = W / H, loss = 1 - Math.min(arS, scr) / Math.max(arS, scr);
-      mat = (loss <= 0.12 && main.w * 2 >= W * dpr) ? 'none' : 'blur';
+      var tolA = Math.max(0.12, (S.settings.fillOnly || 0) / 100);
+      mat = (loss <= tolA && (main.w * 2 >= W * dpr || S.settings.fillOnly)) ? 'none' : 'blur';
     }
     if (mat === 'none' || mat === 'blur' || mat === 'gallery') {
       el.innerHTML = '';
@@ -506,6 +532,8 @@
       if (token !== S.showSeq) return false;
       var main = asMain(im);
       main.thumb = art.thumb;
+      noteAspect(art, main.w, main.h);
+      if (opts.inStep && !fits(art)) { S.bad[art.id] = true; return false; }
       var extrasP = cfg.mat === 'mix' ? extrasFor(art, playlist(), false) : Promise.resolve(null);
       return extrasP.then(function (extras) {
         if (token !== S.showSeq) return false;
@@ -564,7 +592,8 @@
     else if (pf === 'saved') l = S.favorites.concat(S.photos);
     else l = S.ctx.list;
     if (!l || !l.length) l = (S.ctx.list && S.ctx.list.length) ? S.ctx.list : S.favorites.concat(S.photos);
-    return (l || []).filter(alive);
+    var all = (l || []).filter(alive), ok = all.filter(fits);
+    return ok.length ? ok : all;
   }
 
   // Moves to the next/previous picture, skipping any that won't load.
@@ -646,8 +675,25 @@
   /* ---------------- Focus management (D-pad) ---------------- */
   function topLayer() { return S.detailOpen ? $('#detail') : $('#menu'); }
   function visible(el) { return el.offsetParent !== null && !el.classList.contains('disabled-nav'); }
+  var focusedEl = null;
+  function markFocused(el) {
+    if (focusedEl && focusedEl !== el) focusedEl.classList.remove('focused');
+    focusedEl = el;
+    if (el && el.classList) el.classList.add('focused');
+    // Leaving the tab bar cancels a pending tab switch, so it can't redraw under you.
+    if (el && el.classList && !el.classList.contains('tab')) clearTimeout(tabTimer);
+  }
+  function currentFocus() {
+    var a = document.activeElement;
+    if (a && a !== document.body && a.classList && a.classList.contains('focusable')) return a;
+    return (focusedEl && document.body.contains(focusedEl)) ? focusedEl : a;
+  }
+  document.addEventListener('focusin', function (e) {
+    if (e.target && e.target.classList && e.target.classList.contains('focusable')) markFocused(e.target);
+  });
   function focusEl(el) {
     if (!el) return;
+    markFocused(el);
     try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); }
     try { el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' }); }
     catch (e) { el.scrollIntoView(false); }
@@ -655,7 +701,7 @@
 
   function moveFocus(dir) {
     var els = $$('.focusable', topLayer()).filter(visible);
-    var cur = document.activeElement;
+    var cur = currentFocus();
     if (!cur || els.indexOf(cur) < 0) { focusEl(els[0]); return; }
     var r = cur.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
     var best = null, bestScore = Infinity, horiz = dir === 'left' || dir === 'right';
@@ -703,19 +749,15 @@
     im.decoding = 'async'; im.alt = '';
     im.onload = function () {
       if (im.naturalWidth < 2) { im.onerror(); return; }
+      noteAspect(art, im.naturalWidth, im.naturalHeight);
+      if (!fits(art)) { dropCard(c, list, art, 'No pictures here fill the screen.'); return; }
       c.classList.remove('pending');
       var p = c.parentNode;
       if (p) $$('.skeleton', p).forEach(function (sk) { sk.remove(); });
     };
     im.onerror = function () {
       markDead(art, list);
-      var p = c.parentNode, hadFocus = document.activeElement === c;
-      c.remove();
-      if (p && !$('.card.focusable:not(.more):not(.add)', p) && !$('.skeleton', p) && !p.querySelector('.status')) {
-        p.innerHTML = '';
-        p.appendChild(h('div', 'status', 'No pictures here could be loaded.'));
-      }
-      if (hadFocus) moveFocus('right');
+      dropCard(c, null, art, 'No pictures here could be loaded.');
     };
     im.src = art.thumb;
     th.appendChild(im);
@@ -729,6 +771,17 @@
     c._activate = function () { openDetail(art, list); };
     c.onclick = c._activate;
     return c;
+  }
+
+  function dropCard(c, list, art, emptyMsg) {
+    if (list) for (var i = list.length - 1; i >= 0; i--) if (list[i].id === art.id) list.splice(i, 1);
+    var p = c.parentNode, hadFocus = document.activeElement === c;
+    c.remove();
+    if (p && !$('.card.focusable:not(.more):not(.add)', p) && !$('.skeleton', p) && !p.querySelector('.status')) {
+      p.innerHTML = '';
+      p.appendChild(h('div', 'status', emptyMsg));
+    }
+    if (hadFocus) moveFocus('right');
   }
 
   function tileCard(cls, big, label, fn) {
@@ -791,7 +844,8 @@
   }
 
   var tabTimer;
-  var TAB_RENDER = { store: renderStore, photos: renderPhotos, favorites: renderFavorites, settings: renderSettings };
+  var TAB_RENDER = { store: renderStore, photos: renderPhotos, favorites: renderFavorites,
+    music: function (p) { renderMusic(p); }, settings: renderSettings };
 
   function renderTab(tab, focusContent) {
     clearTimeout(tabTimer);
@@ -858,9 +912,14 @@
           r.track.appendChild(h('div', 'status', 'This collection could not be reached. Check the internet connection and try again.'));
           return;
         }
-        items.slice(0, 22).forEach(function (a) { r.track.appendChild(card(a, items)); });
+        var showList = items.filter(fits);
+        if (!showList.length) {
+          r.track.appendChild(h('div', 'status', 'No pictures in this collection fill the screen.'));
+          return;
+        }
+        showList.slice(0, 22).forEach(function (a) { r.track.appendChild(card(a, showList)); });
         r.track.appendChild(skeletons(3));
-        r.track.appendChild(tileCard('more', '›', 'See all ' + items.length, function () { openCollection(r.c); }));
+        r.track.appendChild(tileCard('more', '›', 'See all ' + showList.length, function () { openCollection(r.c); }));
         if (hadFocus) focusEl($('.focusable', r.track));
       }).then(next);
     }
@@ -880,6 +939,7 @@
       if (seq !== S.renderSeq) return;
       status.remove();
       play._activate = play.onclick = function () { playList(items, c.name); };
+      items = items.filter(fits);
       var g = grid(items, c.name);
       p.appendChild(g);
       focusEl(play);
@@ -914,7 +974,7 @@
       Promise.all([aicSearch(q, 30).catch(function () { return []; }), cmaSearch(q, null, 30).catch(function () { return []; })])
         .then(function (lists) {
           if (seq !== S.renderSeq) return;
-          var items = interleave(lists, 60).filter(alive);
+          var items = interleave(lists, 60).filter(shown);
           results.innerHTML = '';
           if (!items.length) {
             results.appendChild(h('div', 'status', 'No public-domain art matched “' + q + '”. Try a broader word.'));
@@ -939,6 +999,7 @@
     var raw = native('listPhotos');
     var arr = [];
     try { arr = raw ? JSON.parse(raw) : []; } catch (e) {}
+    if (!NATIVE && S.simPhotos) arr = S.simPhotos.slice();
     S.photos = arr.map(function (p) {
       var d = new Date(p.time);
       return {
@@ -956,7 +1017,7 @@
       S.photos.length ? S.photos.length + ' photo' + (S.photos.length === 1 ? '' : 's') + ' on this TV.' :
         'Send pictures from your phone and they appear here, ready to frame.', S.photos.length ? [play] : []));
     var add = tileCard('add', '+', 'Add from phone', openUpload);
-    p.appendChild(grid(S.photos, 'My Photos', add));
+    p.appendChild(grid(S.photos.filter(fits), 'My Photos', add));
   }
 
   function openUpload() {
@@ -984,7 +1045,7 @@
     } else if (NATIVE) {
       steps.appendChild(h('p', null, 'This Fire TV is not connected to a local network. Connect it to Wi-Fi or Ethernet and open this page again.'));
     } else {
-      steps.appendChild(h('p', null, 'Phone upload works in the Fire TV app. In a desktop browser preview this feature is unavailable.'));
+      steps.appendChild(h('p', null, 'Phone upload works on the Fire TV. In the simulator, use “Add photos from this computer” in the side panel instead.'));
     }
     box.appendChild(steps);
     p.appendChild(box);
@@ -1011,7 +1072,9 @@
         'Open any artwork and choose Add to favourites to build your own gallery here.',
       S.favorites.length ? [play] : []));
     S.favorites = S.favorites.filter(alive);
-    if (S.favorites.length) p.appendChild(grid(S.favorites, 'Favourites'));
+    var favShown = S.favorites.filter(fits);
+    if (S.favorites.length && !favShown.length) p.appendChild(h('div', 'status', 'None of your favourites fill the screen. Turn off “Only pictures that fill the screen” in Settings to see them.'));
+    if (favShown.length) p.appendChild(grid(favShown, 'Favourites'));
   }
 
   /* Settings */
@@ -1033,6 +1096,8 @@
     { group: 'Picture style' },
     { key: 'mat', label: 'Picture style', hint: 'Auto fills the TV, or blurs the edges for pictures that don’t fit', values: MAT_STYLES.map(function (m) { return m.id; }),
       fmt: function (v) { return MAT_STYLES.filter(function (m) { return m.id === v; })[0].name; } },
+    { key: 'fillOnly', label: 'Only pictures that fill the screen', hint: 'Hides art that would need more than a light crop to fill the TV',
+      values: [0, 6, 12, 20], fmt: function (v) { return { 0: 'Off', 6: 'On (strict)', 12: 'On', 20: 'On (relaxed)' }[v]; } },
     { key: 'matBright', label: 'Mat brightness', hint: 'Paper mat styles only', values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], clamp: true, bar: true, fmt: String },
     { key: 'matWidth', label: 'Border width', hint: 'Paper mat and gallery wall', values: ['slim', 'standard', 'wide'],
       fmt: function (v) { return { slim: 'Slim', standard: 'Standard', wide: 'Wide' }[v]; } },
@@ -1062,7 +1127,9 @@
       var l = h('span', 'lbl', def.label);
       if (def.hint) l.appendChild(h('span', 'hint', def.hint));
       r.appendChild(l);
-      r.appendChild(h('span', 'arr', '‹'));
+      var la = h('span', 'arr', '‹');
+      la.onclick = function (ev) { ev.stopPropagation(); focusEl(r); r._step(-1); };
+      r.appendChild(la);
       var v = h('span', 'val'), val = get();
       if (def.bar) {
         var bar = h('span', 'bar');
@@ -1076,7 +1143,9 @@
       }
       v.appendChild(document.createTextNode(def.fmt(val)));
       r.appendChild(v);
-      r.appendChild(h('span', 'arr', '›'));
+      var ra = h('span', 'arr', '›');
+      ra.onclick = function (ev) { ev.stopPropagation(); focusEl(r); r._step(1); };
+      r.appendChild(ra);
     }
     r._step = function (d) {
       var vals = def.values, i = vals.indexOf(get());
@@ -1088,6 +1157,7 @@
       draw();
     };
     r._activate = function () { r._step(1); };
+    r.onclick = function () { focusEl(r); r._step(1); };
     r._redraw = draw;
     draw();
     return r;
@@ -1106,6 +1176,9 @@
           applyDisplay();
           if (/^mat/.test(def.key)) rerenderCurrent();
           if (def.key === 'interval' || def.key === 'playFrom') scheduleSlideshow();
+          if (def.key === 'fillOnly') {
+            if (S.current && !fits(S.current)) step(1); else rerenderCurrent();
+          }
         }));
     });
     var reset = button('Refresh the art store', '', function () {
@@ -1224,6 +1297,7 @@
     var art = S.detail.art;
     if (!art.photo) return;
     native('deletePhoto', art.photo);
+    if (!NATIVE) S.simPhotos = S.simPhotos.filter(function (p) { return p.name !== art.photo; });
     S.favorites = S.favorites.filter(function (a) { return a.id !== art.id; }); saveFavs();
     S.ctx.list = S.ctx.list.filter(function (a) { return a.id !== art.id; }); store.set('ctx', S.ctx);
     refreshPhotos();
@@ -1235,6 +1309,255 @@
     if (wasCurrent) step(1);
   };
 
+  /* ---------------- Background music ---------------- */
+  // Free, music-only internet radio. Each style has hand-picked stations, plus a fallback
+  // search of the free Radio Browser directory if those are unavailable.
+  var MUSIC_STYLES = [
+    { id: 'classical', name: 'Classical', note: 'Calm orchestral and chamber music', bg: ['#6a5640', '#2b231b'],
+      streams: [['Radio Swiss Classic', 'https://stream.srg-ssr.ch/m/rsc_de/mp3_128']], tags: ['classical', 'classical music'] },
+    { id: 'piano', name: 'Solo piano', note: 'Quiet piano that suits any art', bg: ['#4d4f57', '#1f2024'],
+      streams: [], tags: ['piano', 'solo piano', 'classical piano'] },
+    { id: 'jazz', name: 'Jazz', note: 'Smooth and classic jazz', bg: ['#6b3f2c', '#2a1812'],
+      streams: [['Radio Swiss Jazz', 'https://stream.srg-ssr.ch/m/rsj/mp3_128'], ['SomaFM Sonic Universe', 'https://ice2.somafm.com/sonicuniverse-128-mp3']], tags: ['jazz', 'smooth jazz'] },
+    { id: 'ambient', name: 'Ambient', note: 'Slow, spacious soundscapes', bg: ['#33505a', '#141f24'],
+      streams: [['SomaFM Drone Zone', 'https://ice2.somafm.com/dronezone-128-mp3']], tags: ['ambient', 'meditation'] },
+    { id: 'chill', name: 'Chill and lo-fi', note: 'Mellow downtempo beats', bg: ['#5a4a66', '#211a27'],
+      streams: [['SomaFM Groove Salad', 'https://ice2.somafm.com/groovesalad-128-mp3'], ['SomaFM Fluid', 'https://ice2.somafm.com/fluid-128-mp3']], tags: ['lofi', 'chillout'] },
+    { id: 'acoustic', name: 'Acoustic and folk', note: 'Guitars, voices and strings', bg: ['#6a6040', '#29251a'],
+      streams: [['SomaFM Folk Forward', 'https://ice2.somafm.com/folkfwd-128-mp3']], tags: ['acoustic', 'folk'] },
+    { id: 'lounge', name: 'Lounge', note: 'Soft vocals and easy grooves', bg: ['#6a3f4c', '#29171d'],
+      streams: [['SomaFM Lush', 'https://ice2.somafm.com/lush-128-mp3'], ['SomaFM Secret Agent', 'https://ice2.somafm.com/secretagent-128-mp3']], tags: ['lounge'] },
+    { id: 'worship', name: 'Hymns and worship', note: 'Hymns, choirs and worship music', bg: ['#5c5a6e', '#22212b'],
+      streams: [], tags: ['worship', 'hymns', 'christian'] },
+    { id: 'easy', name: 'Easy listening', note: 'Gentle pop and familiar songs', bg: ['#40606a', '#182529'],
+      streams: [['Radio Swiss Pop', 'https://stream.srg-ssr.ch/m/rsp/mp3_128']], tags: ['easy listening', 'oldies'] }
+  ];
+  var MUSIC_APPS = [
+    { id: 'spotify', name: 'Spotify', pkg: 'com.spotify.tv.android', bg: ['#1f5c38', '#0d2617'],
+      tip: 'Pick a playlist in Spotify on the TV, or on your phone tap the speaker icon and choose this Fire TV.' },
+    { id: 'amazon', name: 'Amazon Music', pkg: 'com.amazon.bueller.music', bg: ['#1f4f63', '#0c2029'],
+      tip: 'Start a playlist in Amazon Music, or just say “Alexa, play relaxing jazz” into the remote.' },
+    { id: 'apple', name: 'Apple Music', pkg: 'com.apple.android.music', bg: ['#6a2a3a', '#2a1017'],
+      tip: 'Start a playlist in Apple Music on the TV.' }
+  ];
+  function musicStyle(id) { return MUSIC_STYLES.filter(function (m) { return m.id === id; })[0]; }
+
+  var audio = new Audio();
+  audio.preload = 'none';
+  var M = { token: 0, cands: [], idx: -1, fetched: false, playing: false, blocked: false, timer: null, fade: null };
+
+  function musicTarget() {
+    var v = Math.pow((S.settings.musicVolume || 4) / 10, 1.6);
+    if (S.settings.nightMode && isNight()) v *= 0.6;
+    return Math.max(0, Math.min(1, v));
+  }
+  function fadeTo(target, ms, done) {
+    clearInterval(M.fade);
+    var start = audio.volume, t0 = Date.now();
+    M.fade = setInterval(function () {
+      var k = Math.min(1, (Date.now() - t0) / (ms || 2500));
+      try { audio.volume = start + (target - start) * k; } catch (e) {}
+      if (k >= 1) { clearInterval(M.fade); if (done) done(); }
+    }, 60);
+  }
+
+  function radioBrowser(tags) {
+    var hosts = ['de1', 'de2', 'fi1', 'at1', 'nl1'];
+    function query(hi, ti) {
+      if (ti >= tags.length) return Promise.resolve([]);
+      if (hi >= hosts.length) return query(0, ti + 1);
+      var url = 'https://' + hosts[hi] + '.api.radio-browser.info/json/stations/search?tag=' + enc(tags[ti]) +
+        '&is_https=true&hidebroken=true&order=clickcount&reverse=true&limit=25';
+      return getJSON(url).then(function (list) {
+        var out = (list || []).filter(function (x) {
+          var u = x.url_resolved || x.url || '';
+          return u.indexOf('https://') === 0 && !x.hls && /MP3|AAC/i.test(x.codec || 'MP3');
+        }).map(function (x) { return { name: (x.name || 'Radio').trim(), url: x.url_resolved || x.url }; });
+        return out.length ? out : query(0, ti + 1);
+      }, function () { return query(hi + 1, ti); });
+    }
+    return query(0, 0);
+  }
+
+  function musicStart(announce) {
+    var st = musicStyle(S.settings.musicStyle);
+    musicHalt();
+    if (DREAM || S.settings.musicSource !== 'free' || !st || S.sleeping) { renderMusicStatus(); return; }
+    var tok = ++M.token;
+    M.cands = st.streams.map(function (x) { return { name: x[0], url: x[1] }; });
+    M.idx = -1; M.fetched = false; M.style = st;
+    nextStream(tok, announce);
+  }
+  function nextStream(tok, announce) {
+    if (tok !== M.token) return;
+    clearTimeout(M.timer);
+    M.idx++;
+    if (M.idx >= M.cands.length) {
+      if (!M.fetched) {
+        M.fetched = true;
+        radioBrowser(M.style.tags).then(function (list) {
+          if (tok !== M.token) return;
+          var have = {}; M.cands.forEach(function (c) { have[c.url] = 1; });
+          list.forEach(function (c) { if (!have[c.url]) { have[c.url] = 1; M.cands.push(c); } });
+          M.idx--; nextStream(tok, announce);
+        });
+        return;
+      }
+      M.now = null;
+      renderMusicStatus();
+      toast('Couldn’t reach any ' + M.style.name.toLowerCase() + ' stations. Trying again in 2 minutes.');
+      M.timer = setTimeout(function () { if (tok === M.token) musicStart(false); }, 120000);
+      return;
+    }
+    var c = M.cands[M.idx];
+    M.playing = false; M.now = c;
+    try { audio.volume = 0; } catch (e) {}
+    audio.src = c.url;
+    M.timer = setTimeout(function () { if (tok === M.token && !M.playing) nextStream(tok, announce); }, 12000);
+    M.announce = announce;
+    var p;
+    try { p = audio.play(); } catch (e) {}
+    if (p && p.catch) p.catch(function (err) {
+      if (tok !== M.token) return;
+      if (err && err.name === 'NotAllowedError') {
+        clearTimeout(M.timer);
+        M.blocked = true;
+        toast('Press OK or click the TV to start the music');
+      }
+    });
+    renderMusicStatus();
+  }
+  audio.addEventListener('playing', function () {
+    if (M.playing) return;
+    M.playing = true; M.blocked = false;
+    clearTimeout(M.timer);
+    fadeTo(musicTarget(), 3000);
+    if (M.announce && M.now) toast('♪ ' + M.style.name + ' · ' + M.now.name);
+    M.announce = false;
+    renderMusicStatus();
+  });
+  function streamDropped() {
+    if (S.settings.musicSource !== 'free' || !M.style || !M.now) return;
+    var tok = M.token, c = M.now;
+    c.fails = (c.fails || 0) + 1;
+    if (M.playing && c.fails < 3) M.idx--;            // a station that was working: reconnect to it
+    M.playing = false;
+    clearTimeout(M.timer);
+    M.timer = setTimeout(function () { nextStream(tok, false); }, 1500);
+  }
+  audio.addEventListener('error', function () { if (audio.getAttribute('src')) streamDropped(); });
+  audio.addEventListener('ended', streamDropped);
+
+  function musicHalt() {
+    M.token++;
+    clearTimeout(M.timer); clearInterval(M.fade);
+    M.playing = false; M.blocked = false;
+    try { audio.pause(); } catch (e) {}
+    audio.removeAttribute('src');
+    try { audio.load(); } catch (e) {}
+  }
+  function musicStop() {
+    if (!M.playing) { musicHalt(); renderMusicStatus(); return; }
+    var tok = M.token;
+    fadeTo(0, 1200, function () { if (tok === M.token) { musicHalt(); renderMusicStatus(); } });
+  }
+  function musicUnblock() {
+    if (!M.blocked) return;
+    M.blocked = false;
+    try { var p = audio.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
+  }
+  function setMusic(source, style) {
+    S.settings.musicSource = source;
+    if (style) S.settings.musicStyle = style;
+    saveSettings();
+    if (source === 'free') musicStart(true); else musicStop();
+  }
+  window.onAppPause = function () { musicHalt(); };
+  window.onAppResume = function () { if (S.settings.musicSource === 'free' && !S.sleeping) musicStart(false); };
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) window.onAppPause(); else window.onAppResume();
+  });
+
+  /* Music tab */
+  function musicTile(name, note, bg, badge, fn) {
+    var c = h('div', 'card focusable music-tile');
+    c.tabIndex = -1;
+    var th = h('div', 'thumb');
+    th.style.background = 'linear-gradient(150deg,' + bg[0] + ' 0%,' + bg[1] + ' 100%)';
+    th.appendChild(h('div', 'mt-name', name));
+    th.appendChild(h('div', 'mt-note', note));
+    if (badge) th.appendChild(h('span', 'badge', badge));
+    c.appendChild(th);
+    c._activate = fn; c.onclick = fn;
+    return c;
+  }
+  function renderMusicStatus() {
+    var el = $('#musicStatus');
+    if (!el) return;
+    var st = S.settings;
+    if (st.musicSource === 'free' && M.style) {
+      el.textContent = M.playing ? '♪ Now playing: ' + M.style.name + (M.now ? ' · ' + M.now.name : '') :
+        (M.blocked ? 'Press OK to start the music.' : 'Connecting to ' + M.style.name.toLowerCase() + '…');
+    } else if (st.musicSource === 'app') {
+      el.textContent = 'Using your music app. Atelier stays silent so your music isn’t interrupted.';
+    } else {
+      el.textContent = 'Music is off.';
+    }
+  }
+  function renderMusic(p) {
+    p.appendChild(viewHead('Music', 'Free background music while your art is on the wall, or play from your own music app.'));
+    var status = h('div', 'status music-status'); status.id = 'musicStatus';
+    p.appendChild(status);
+
+    p.appendChild(h('div', 'group-title', 'Free music'));
+    var g = h('div', 'grid');
+    var st = S.settings;
+    g.appendChild(musicTile('Off', 'No music', ['#3a3936', '#1c1b19'], st.musicSource === 'off' ? 'Selected' : '', function () {
+      setMusic('off'); renderTab('music', false); focusEl($('.music-tile'));
+    }));
+    MUSIC_STYLES.forEach(function (m, i) {
+      var on = st.musicSource === 'free' && st.musicStyle === m.id;
+      g.appendChild(musicTile(m.name, m.note, m.bg, on ? 'Playing' : '', function () {
+        setMusic('free', m.id); renderTab('music', false); focusEl($$('.music-tile')[i + 1]);
+      }));
+    });
+    p.appendChild(g);
+
+    var list = h('div', 'settings');
+    list.style.marginTop = '2vh';
+    list.appendChild(stepperEl({ label: 'Music volume', values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], clamp: true, bar: true, fmt: String },
+      function () { return S.settings.musicVolume; },
+      function (v) { S.settings.musicVolume = v; saveSettings(); if (M.playing) fadeTo(musicTarget(), 400); }));
+    list.appendChild(stepperEl({ label: 'Show station name', hint: 'Briefly when the music starts', values: [true, false], fmt: function (v) { return v ? 'On' : 'Off'; } },
+      function () { return S.settings.musicAnnounce; },
+      function (v) { S.settings.musicAnnounce = v; saveSettings(); }));
+    p.appendChild(list);
+
+    p.appendChild(h('div', 'group-title', 'Your music app'));
+    var g2 = h('div', 'grid');
+    MUSIC_APPS.forEach(function (a, i) {
+      var on = st.musicSource === 'app' && st.musicApp === a.id;
+      g2.appendChild(musicTile(a.name, 'Open ' + a.name + ', start your music, then come back', a.bg, on ? 'Selected' : '', function () {
+        S.settings.musicApp = a.id;
+        setMusic('app');
+        renderTab('music', false);
+        focusEl($$('.music-tile')[MUSIC_STYLES.length + 1 + i]);
+        if (!NATIVE) { toast('On the Fire TV this opens ' + a.name); return; }
+        if (native('launchApp', a.pkg)) toast('When your music is playing, press Home and open Atelier again');
+        else toast(a.name + ' isn’t installed on this Fire TV. You can get it from the Amazon Appstore.');
+      }));
+    });
+    p.appendChild(g2);
+    var how = h('div', 'about focusable');
+    how.tabIndex = -1;
+    how.textContent = 'How it works: Atelier opens your music app. Start a playlist there (Spotify can also be started from your phone ' +
+      'by choosing this Fire TV as the speaker, and Amazon Music by asking Alexa). Then press Home and open Atelier again. ' +
+      'The music keeps playing while your art is on screen, and Atelier stays silent so it doesn’t interrupt. ' +
+      MUSIC_APPS.map(function (a) { return a.tip; }).join(' ');
+    p.appendChild(how);
+    renderMusicStatus();
+  }
+
   /* ---------------- Sleep ---------------- */
   function noteActivity() { S.lastActivity = Date.now(); }
   function enterSleep() {
@@ -1243,6 +1566,7 @@
     closeDetail(); closeMenu();
     $('#sleep').classList.remove('hidden');
     native('setKeepScreenOn', false);
+    musicStop();
   }
   function wake() {
     S.sleeping = false;
@@ -1250,8 +1574,10 @@
     native('setKeepScreenOn', true);
     noteActivity();
     scheduleSlideshow();
+    if (S.settings.musicSource === 'free') musicStart(false);
   }
   setInterval(function () {
+    if (M.playing) { var tv = musicTarget(); if (Math.abs(audio.volume - tv) > 0.02) fadeTo(tv, 3000); }
     var hrs = S.settings.sleepAfter;
     if (!DREAM && hrs && !S.sleeping && Date.now() - S.lastActivity > hrs * 3600000) enterSleep();
     applyDisplay();
@@ -1301,6 +1627,9 @@
       case 27: return 'back';
       case 8: return (e.target && e.target.tagName === 'INPUT') ? null : 'back';
       case 77: return 'menu';
+      case 32: return (e.target && e.target.tagName === 'INPUT') ? null : 'playpause';
+      case 219: return 'prev';
+      case 221: return 'next';
       default: return null;
     }
   }
@@ -1311,22 +1640,52 @@
     else if (k === 'ok' || k === 'up' || k === 'menu') openMenu();
   }
 
+  function exitApp() {
+    if (NATIVE) { native('exitApp'); return; }
+    if (window.parent !== window) window.parent.postMessage({ atelier: 'exit' }, '*');
+  }
+
+  // Returns false when the key should keep its normal behaviour (typing in the search box).
+  function handleKey(k) {
+    noteActivity();
+    musicUnblock();
+    if (S.sleeping) { wake(); return true; }
+    if (k === 'back') { if (!window.handleBack()) exitApp(); return true; }
+    if (k === 'menu') { window.onRemote('menu'); return true; }
+    if (k === 'playpause' || k === 'prev' || k === 'next') { window.onRemote(k); return true; }
+    var a = currentFocus();
+    var inInput = a && a.tagName === 'INPUT';
+    if (inInput && (k === 'left' || k === 'right')) return false;
+    if (!S.menuOpen && !S.detailOpen) { artKey(k); return true; }
+    if (k === 'ok') { activate(a && a !== document.body ? a : null); return true; }
+    if ((k === 'left' || k === 'right') && a && typeof a._step === 'function') { a._step(k === 'left' ? -1 : 1); return true; }
+    moveFocus(k);
+    return true;
+  }
+
   document.addEventListener('keydown', function (e) {
     if (DREAM) return;
-    noteActivity();
-    if (S.sleeping) { e.preventDefault(); wake(); return; }
     var k = keyOf(e);
-    if (!k) return;
-    if (k === 'back') { e.preventDefault(); if (!window.handleBack()) native('exitApp'); return; }
-    if (k === 'menu') { e.preventDefault(); window.onRemote('menu'); return; }
-    var a = document.activeElement;
-    var inInput = a && a.tagName === 'INPUT';
-    if (inInput && (k === 'left' || k === 'right')) return;
-    e.preventDefault();
-    if (!S.menuOpen && !S.detailOpen) { artKey(k); return; }
-    if (k === 'ok') { activate(a && a !== document.body ? a : null); return; }
-    if ((k === 'left' || k === 'right') && a && typeof a._step === 'function') { a._step(k === 'left' ? -1 : 1); return; }
-    moveFocus(k);
+    if (!k) { noteActivity(); if (S.sleeping) wake(); return; }
+    if (handleKey(k)) e.preventDefault();
+  });
+
+  // Messages from the desktop simulator (simulator.html).
+  S.simPhotos = [];
+  window.addEventListener('message', function (e) {
+    var m = e.data;
+    if (!m || m.atelier !== 'sim') return;
+    if (m.key) handleKey(m.key);
+    else if (m.remote) window.onRemote(m.remote);
+    else if (m.photos) {
+      m.photos.forEach(function (p) {
+        S.simPhotos.unshift({ name: p.name, url: p.url, thumb: p.url, time: Date.now() });
+      });
+      window.onPhotosChanged();
+    } else if (m.reset) {
+      try { Object.keys(localStorage).forEach(function (k) { if (k.indexOf('atelier.') === 0) localStorage.removeItem(k); }); } catch (x) {}
+      location.reload();
+    }
   });
 
   var resizeTimer;
@@ -1336,8 +1695,11 @@
   });
 
   /* ---------------- Start ---------------- */
+  document.addEventListener('click', musicUnblock);
+
   function init() {
     applyDisplay();
+    if (S.settings.musicSource === 'free') musicStart(false);
     refreshPhotos();
     tickClock();
     if (S.current) {

@@ -41,6 +41,10 @@ No computer handy? Upload the APK somewhere you can reach by URL and install it 
 
 Atelier then appears under Your Apps & Channels. Press and hold the Home button > Apps to move it to the front row.
 
+## Try it on your computer first
+
+Double-click `simulator.html` to open it in Chrome or Edge. It is a single self-contained file, so it works from any folder. (After changing the web app, rebuild it with `python tools/build-simulator.py`.) It runs the real app on a virtual TV on a wall, with a clickable Fire TV remote, a room-light slider, and a button to try your own photos. Make changes, check them in the simulator, then upload to GitHub.
+
 ## Using it
 
 Remote in Art Mode:
@@ -54,6 +58,7 @@ Menu tabs:
 - Art Store: 13 curated collections plus search across the museum archives. Open any work to preview it on a mat, pick a mat style and colour for that work, favourite it, or put it on the wall. Each collection has Play this collection.
 - My Photos: choose Add from phone, scan the QR code (phone must be on the same Wi-Fi), pick photos and tap Send. They're resized to 4K on the phone and appear on the TV within seconds.
 - Favourites: your own gallery.
+- Music: free background music in nine styles (classical, solo piano, jazz, ambient, chill and lo-fi, acoustic and folk, lounge, hymns and worship, easy listening) from free internet radio, with automatic fallback to another station if one is down. Or choose Spotify, Amazon Music or Apple Music: Atelier opens the app, you start your music, then return to Atelier and it keeps playing while Atelier stays silent.
 - Settings: brightness, colour tone (cool to warm), matte finish, frame bezel, default mat, slideshow interval, play from, order, art info, sleep after, night mode.
 
 Mat styles: None (full screen), Modern, Shadowbox, Panoramic, Triptych, Mix (three works together). Twelve mat colours. Mats are remembered per artwork.
