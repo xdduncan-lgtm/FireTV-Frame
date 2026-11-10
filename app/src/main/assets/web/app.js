@@ -29,7 +29,7 @@
     set: function (k, v) { try { localStorage.setItem('atelier.' + k, JSON.stringify(v)); } catch (e) {} }
   };
 
-  /* ---------------- Catalogue ---------------- */
+  /* ---------------- Catalog ---------------- */
   var MAT_STYLES = [
     { id: 'smart', name: 'Auto: fill the TV' },
     { id: 'none', name: 'Fill screen (crop)' },
@@ -62,7 +62,7 @@
     { id: 'impressionism', name: 'Impressionist masters', note: 'Monet, Renoir, Pissarro, Morisot', sources: [['aic', 'impressionism'], ['cma', 'impressionism', 'Painting']] },
     { id: 'postimp', name: 'Post-Impressionism', note: 'Van Gogh, Cézanne, Gauguin, Seurat', sources: [['aic', 'post-impressionism'], ['cma', 'post-impressionism', 'Painting']] },
     { id: 'landscapes', name: 'Landscapes', note: 'Fields, forests and mountains', sources: [['aic', 'landscape painting'], ['cma', 'landscape', 'Painting']] },
-    { id: 'seascapes', name: 'Seascapes', note: 'Coasts, harbours and open water', sources: [['aic', 'seascape'], ['cma', 'seascape', 'Painting']] },
+    { id: 'seascapes', name: 'Seascapes', note: 'Coasts, harbors and open water', sources: [['aic', 'seascape'], ['cma', 'seascape', 'Painting']] },
     { id: 'japanese', name: 'Japanese woodblock prints', note: 'Hokusai, Hiroshige and the ukiyo-e masters', sources: [['aic', 'hiroshige'], ['aic', 'hokusai'], ['cma', 'ukiyo-e', 'Print']] },
     { id: 'stilllife', name: 'Still life and flowers', note: 'Bouquets, fruit and quiet tables', sources: [['aic', 'still life flowers'], ['cma', 'still life', 'Painting']] },
     { id: 'botanical', name: 'Botanical studies', note: 'Natural history illustration', sources: [['cma', 'botanical'], ['aic', 'botanical']] },
@@ -81,7 +81,7 @@
   };
 
   /* ---------------- State ---------------- */
-  // v2: switch existing installs to the softer auto-coloured mat.
+  // v2: switch existing installs to the softer auto-colored mat.
   var savedSettings = store.get('settings', {}), savedMats = store.get('matByArt', {});
   if (!savedSettings.v4) {
     delete savedSettings.mat;
@@ -316,7 +316,7 @@
   function fit(aw, ah, mw, mh) { var s = Math.min(mw / aw, mh / ah); return { w: aw * s, h: ah * s }; }
   function cssUrl(src) { return 'url("' + String(src).replace(/"/g, '%22') + '")'; }
 
-  /* Auto mat colour: a muted tone sampled from the artwork itself. */
+  /* Auto mat color: a muted tone sampled from the artwork itself. */
   var toneCache = {};
   function hslHex(hh, ss, ll) {
     function f(n) {
@@ -1064,17 +1064,17 @@
     if (S.menuOpen && S.tab === 'photos' && !S.sub) renderTab('photos', false);
   };
 
-  /* Favourites */
+  /* Favorites */
   function renderFavorites(p) {
-    var play = button('Play favourites', 'primary', function () { playList(S.favorites, 'Favourites'); });
-    p.appendChild(viewHead('Favourites',
+    var play = button('Play favorites', 'primary', function () { playList(S.favorites, 'Favorites'); });
+    p.appendChild(viewHead('Favorites',
       S.favorites.length ? 'Your personal gallery. Open any work to change its mat or remove it.' :
-        'Open any artwork and choose Add to favourites to build your own gallery here.',
+        'Open any artwork and choose Add to favorites to build your own gallery here.',
       S.favorites.length ? [play] : []));
     S.favorites = S.favorites.filter(alive);
     var favShown = S.favorites.filter(fits);
-    if (S.favorites.length && !favShown.length) p.appendChild(h('div', 'status', 'None of your favourites fill the screen. Turn off “Only pictures that fill the screen” in Settings to see them.'));
-    if (favShown.length) p.appendChild(grid(favShown, 'Favourites'));
+    if (S.favorites.length && !favShown.length) p.appendChild(h('div', 'status', 'None of your favorites fill the screen. Turn off “Only pictures that fill the screen” in Settings to see them.'));
+    if (favShown.length) p.appendChild(grid(favShown, 'Favorites'));
   }
 
   /* Settings */
@@ -1087,7 +1087,7 @@
   var SETTINGS = [
     { group: 'Picture' },
     { key: 'brightness', label: 'Brightness', values: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10], clamp: true, bar: true, fmt: String },
-    { key: 'tone', label: 'Colour tone', values: [-4, -3, -2, -1, 0, 1, 2, 3, 4], clamp: true,
+    { key: 'tone', label: 'Color tone', values: [-4, -3, -2, -1, 0, 1, 2, 3, 4], clamp: true,
       fmt: function (v) { return v === 0 ? 'Standard' : (v < 0 ? 'Cool ' + (-v) : 'Warm ' + v); } },
     { key: 'texture', label: 'Matte finish', hint: 'Soft canvas grain that reduces the screen look', values: [true, false],
       fmt: function (v) { return v ? 'On' : 'Off'; } },
@@ -1101,13 +1101,13 @@
     { key: 'matBright', label: 'Mat brightness', hint: 'Paper mat styles only', values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], clamp: true, bar: true, fmt: String },
     { key: 'matWidth', label: 'Border width', hint: 'Paper mat and gallery wall', values: ['slim', 'standard', 'wide'],
       fmt: function (v) { return { slim: 'Slim', standard: 'Standard', wide: 'Wide' }[v]; } },
-    { key: 'matColor', label: 'Mat colour', hint: 'Paper mat styles only', swatch: true, values: MAT_COLORS.map(function (m) { return m.id; }),
+    { key: 'matColor', label: 'Mat color', hint: 'Paper mat styles only', swatch: true, values: MAT_COLORS.map(function (m) { return m.id; }),
       fmt: function (v) { return MAT_COLORS.filter(function (m) { return m.id === v; })[0].name; } },
     { group: 'Slideshow' },
     { key: 'interval', label: 'Change every', values: [0, 3, 10, 30, 60, 180, 720, 1440], fmt: fmtInterval },
     { key: 'playFrom', label: 'Play from', values: ['current', 'favorites', 'photos', 'saved'],
       fmt: function (v) {
-        return { current: S.ctx.name ? 'Current: ' + S.ctx.name : 'Current selection', favorites: 'Favourites', photos: 'My Photos', saved: 'Favourites + photos' }[v];
+        return { current: S.ctx.name ? 'Current: ' + S.ctx.name : 'Current selection', favorites: 'Favorites', photos: 'My Photos', saved: 'Favorites + photos' }[v];
       } },
     { key: 'order', label: 'Order', values: ['sequential', 'shuffle'], fmt: function (v) { return v === 'shuffle' ? 'Shuffle' : 'In order'; } },
     { key: 'showInfo', label: 'Show art info', hint: 'Title and artist appear briefly when the art changes', values: [true, false],
@@ -1189,7 +1189,7 @@
     list.appendChild(reset);
     var about = h('div', 'about focusable');
     about.tabIndex = -1;
-    about.textContent = 'Atelier shows public-domain and CC0 artwork from the open-access programmes of the Art Institute of Chicago, ' +
+    about.textContent = 'Atelier shows public-domain and CC0 artwork from the open-access programs of the Art Institute of Chicago, ' +
       'the Cleveland Museum of Art and The Metropolitan Museum of Art. Your own photos stay on this TV.';
     list.appendChild(about);
     p.appendChild(list);
@@ -1198,7 +1198,7 @@
   /* ---------------- Detail ---------------- */
   var dMatDef = { label: 'Picture style', values: MAT_STYLES.map(function (m) { return m.id; }),
     fmt: function (v) { return MAT_STYLES.filter(function (m) { return m.id === v; })[0].name; } };
-  var dColDef = { label: 'Mat colour', swatch: true, values: MAT_COLORS.map(function (m) { return m.id; }),
+  var dColDef = { label: 'Mat color', swatch: true, values: MAT_COLORS.map(function (m) { return m.id; }),
     fmt: function (v) { return MAT_COLORS.filter(function (m) { return m.id === v; })[0].name; } };
 
   function buildDetailSteppers() {
@@ -1236,7 +1236,7 @@
   }
   function updateDetailButtons() {
     var art = S.detail.art;
-    $('#dFav').textContent = isFav(art) ? '♥  In favourites (press to remove)' : '♡  Add to favourites';
+    $('#dFav').textContent = isFav(art) ? '♥  In favorites (press to remove)' : '♡  Add to favorites';
     $('#dShow').textContent = (S.current && S.current.id === art.id) ? 'On the wall now. Return to Art Mode' : 'Display on wall';
   }
   function closeDetail() {
@@ -1284,10 +1284,10 @@
     var art = S.detail.art;
     if (isFav(art)) {
       S.favorites = S.favorites.filter(function (a) { return a.id !== art.id; });
-      toast('Removed from favourites');
+      toast('Removed from favorites');
     } else {
       S.favorites.unshift(art);
-      toast('Added to favourites');
+      toast('Added to favorites');
     }
     saveFavs();
     updateDetailButtons();
@@ -1645,7 +1645,7 @@
     if (window.parent !== window) window.parent.postMessage({ atelier: 'exit' }, '*');
   }
 
-  // Returns false when the key should keep its normal behaviour (typing in the search box).
+  // Returns false when the key should keep its normal behavior (typing in the search box).
   function handleKey(k) {
     noteActivity();
     musicUnblock();
