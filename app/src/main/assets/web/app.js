@@ -31,9 +31,11 @@
 
   /* ---------------- Catalogue ---------------- */
   var MAT_STYLES = [
-    { id: 'smart', name: 'Auto (fits each picture)' },
-    { id: 'none', name: 'None' },
-    { id: 'modern', name: 'Modern' },
+    { id: 'smart', name: 'Auto: fill the TV' },
+    { id: 'none', name: 'Fill screen (crop)' },
+    { id: 'blur', name: 'Blurred background' },
+    { id: 'gallery', name: 'Gallery wall (dark)' },
+    { id: 'modern', name: 'Paper mat' },
     { id: 'shadowbox', name: 'Shadowbox' },
     { id: 'panoramic', name: 'Panoramic' },
     { id: 'triptych', name: 'Triptych' },
@@ -80,6 +82,11 @@
   /* ---------------- State ---------------- */
   // v2: switch existing installs to the softer auto-coloured mat.
   var savedSettings = store.get('settings', {}), savedMats = store.get('matByArt', {});
+  if (!savedSettings.v4) {
+    delete savedSettings.mat;
+    savedSettings.v4 = savedSettings.v3 = true;
+    Object.keys(savedMats).forEach(function (k) { delete savedMats[k].mat; });
+  }
   if (!savedSettings.v3) {
     delete savedSettings.mat;
     savedSettings.v3 = true;
@@ -98,7 +105,7 @@
     favorites: store.get('favorites', []),
     matByArt: savedMats,
     current: store.get('current', null),
-    bad: {}, stepFrom: null, stepTries: 0,
+    bad: {}, dead: store.get('dead', {}), stepFrom: null, stepTries: 0,
     ctx: store.get('ctx', { list: [], name: '' }),
     cache: store.get('cache', {}),
     photos: [],
@@ -108,6 +115,17 @@
     front: null, slideTimer: null, capTimer: null, showSeq: 0, pvSeq: 0, renderSeq: 0
   };
 
+  // Pictures whose image can't be read are remembered and never shown again.
+  function alive(a) { return a && !S.dead[a.id]; }
+  function markDead(art, list) {
+    if (!S.dead[art.id]) {
+      S.dead[art.id] = 1;
+      var keys = Object.keys(S.dead);
+      if (keys.length > 3000) delete S.dead[keys[0]];
+      store.set('dead', S.dead);
+    }
+    if (list) for (var i = list.length - 1; i >= 0; i--) if (list[i].id === art.id) list.splice(i, 1);
+  }
   function saveSettings() { store.set('settings', S.settings); }
   function saveFavs() { store.set('favorites', S.favorites); }
   function saveCache() { store.set('cache', S.cache); }
@@ -227,12 +245,12 @@
 
   function loadCollection(c) {
     var hit = S.cache[c.id];
-    if (hit && hit.items && hit.items.length && Date.now() - hit.t < 3 * 864e5) return Promise.resolve(hit.items);
+    if (hit && hit.items && hit.items.length && Date.now() - hit.t < 3 * 864e5) return Promise.resolve(hit.items.filter(alive));
     return Promise.all(c.sources.map(function (s) { return runSource(s).catch(function () { return []; }); }))
       .then(function (lists) {
-        var items = interleave(lists, 48);
+        var items = interleave(lists, 60).filter(alive).slice(0, 48);
         if (items.length) { S.cache[c.id] = { t: Date.now(), items: items }; saveCache(); return items; }
-        return hit && hit.items ? hit.items : [];
+        return hit && hit.items ? hit.items.filter(alive) : [];
       });
   }
   function collectionById(id) { return COLLECTIONS.filter(function (c) { return c.id === id; })[0]; }
@@ -338,17 +356,45 @@
       if (f0.w > cap) f0 = { w: cap, h: cap * main.h / main.w };
       return f0;
     }
+    // Auto: fill the screen when the picture is close to TV shape (crops at most ~12%),
+    // otherwise show it whole over a blurred, dimmed copy of itself.
     if (mat === 'smart') {
-      var arS = main.w / main.h, screenAr = W / H, bias = { slim: 0.75, standard: 1, wide: 1.35 }[S.settings.matWidth] || 1;
-      if (Math.abs(arS - screenAr) < 0.12 && main.w >= 1200) {
-        mat = 'modern'; mw = 0.055 * bias;              // TV-shaped: thin border, nearly full screen
-      } else if (arS < 0.95) {
-        mat = 'modern'; mw = 0.06 * bias;               // portrait: use the full height
-      } else if (arS > 2.1) {
-        mat = 'modern'; mw = 0.07 * bias;               // panorama: use the full width
-      } else {
-        mat = 'modern'; mw = 0.095 * bias;              // landscape / square
+      var arS = main.w / main.h, scr = W / H, loss = 1 - Math.min(arS, scr) / Math.max(arS, scr);
+      mat = (loss <= 0.12 && main.w * 2 >= W * dpr) ? 'none' : 'blur';
+    }
+    if (mat === 'none' || mat === 'blur' || mat === 'gallery') {
+      el.innerHTML = '';
+      el.style.fontSize = (H / 100) + 'px';
+      var pic = h('div', 'aperture');
+      if (mat === 'none') {
+        el.style.backgroundColor = '#000';
+        pic.style.cssText = 'left:0;top:0;width:' + W + 'px;height:' + H + 'px;background-image:' + cssUrl(main.src);
+        el.appendChild(pic);
+        return;
       }
+      if (mat === 'blur') {
+        el.style.backgroundColor = '#000';
+        var bg = h('div', 'blur-bg');
+        bg.style.backgroundImage = cssUrl(main.thumb || main.src);
+        el.appendChild(bg);
+        el.appendChild(h('div', 'blur-shade'));
+        var fb = sharpFit(W, H);
+        pic.className = 'aperture lifted';
+        pic.style.cssText = 'left:' + (W - fb.w) / 2 + 'px;top:' + (H - fb.h) / 2 + 'px;width:' + fb.w + 'px;height:' + fb.h +
+          'px;background-image:' + cssUrl(main.src);
+        el.appendChild(pic);
+        return;
+      }
+      // Gallery wall: dark wall, soft spotlight, picture in a slim black frame.
+      el.style.backgroundColor = '#1b1a18';
+      el.appendChild(h('div', 'spotlight'));
+      var mg = H * (0.06 * ({ slim: 0.7, standard: 1, wide: 1.6 }[S.settings.matWidth] || 1));
+      var fg = sharpFit(W - 2 * mg, H - 2 * mg);
+      pic.className = 'aperture framed';
+      pic.style.cssText = 'left:' + (W - fg.w) / 2 + 'px;top:' + (H - fg.h) / 2 + 'px;width:' + fg.w + 'px;height:' + fg.h +
+        'px;background-image:' + cssUrl(main.src);
+      el.appendChild(pic);
+      return;
     }
     if (mat === 'mix' && !(extras && extras.length >= 2)) mat = 'modern';
     var col = cfg.hex || matHex(cfg.color);
@@ -381,9 +427,6 @@
 
     var f, m, d;
     switch (mat) {
-      case 'none':
-        ap(0, 0, W, H, main.src);
-        break;
       case 'shadowbox':
         m = H * (mw - 0.015);
         f = sharpFit(W - 2 * m, H - 2 * m);
@@ -423,6 +466,7 @@
     }
   }
 
+  function usesMat(m) { return ['modern', 'shadowbox', 'panoramic', 'triptych', 'mix'].indexOf(m) >= 0; }
   function matFor(art) {
     var o = art && S.matByArt[art.id];
     return { mat: (o && o.mat) || S.settings.mat, color: (o && o.color) || S.settings.matColor };
@@ -461,6 +505,7 @@
     }).then(function (im) {
       if (token !== S.showSeq) return false;
       var main = asMain(im);
+      main.thumb = art.thumb;
       var extrasP = cfg.mat === 'mix' ? extrasFor(art, playlist(), false) : Promise.resolve(null);
       return extrasP.then(function (extras) {
         if (token !== S.showSeq) return false;
@@ -486,6 +531,10 @@
     }).catch(function () {
       if (token !== S.showSeq) return false;
       S.bad[art.id] = true;
+      if (Object.keys(S.dead).length || S.current) {
+        // Only blacklist for good if the thumbnail is also unreadable (not just a network blip).
+        loadImg(art.thumb).catch(function () { if (navigator.onLine !== false) markDead(art); });
+      }
       if (!opts.inStep) {
         toast('“' + art.title + '” couldn’t be loaded.');
         scheduleSlideshow();
@@ -515,7 +564,7 @@
     else if (pf === 'saved') l = S.favorites.concat(S.photos);
     else l = S.ctx.list;
     if (!l || !l.length) l = (S.ctx.list && S.ctx.list.length) ? S.ctx.list : S.favorites.concat(S.photos);
-    return l || [];
+    return (l || []).filter(alive);
   }
 
   // Moves to the next/previous picture, skipping any that won't load.
@@ -648,11 +697,27 @@
   function isFav(art) { return S.favorites.some(function (a) { return a.id === art.id; }); }
 
   function card(art, list) {
-    var c = h('div', 'card focusable');
+    var c = h('div', 'card focusable pending');
     c.tabIndex = -1;
     var th = h('div', 'thumb'), im = document.createElement('img');
-    im.loading = 'lazy'; im.decoding = 'async'; im.alt = ''; im.src = art.thumb;
-    im.onerror = function () { th.classList.add('broken'); im.remove(); };
+    im.decoding = 'async'; im.alt = '';
+    im.onload = function () {
+      if (im.naturalWidth < 2) { im.onerror(); return; }
+      c.classList.remove('pending');
+      var p = c.parentNode;
+      if (p) $$('.skeleton', p).forEach(function (sk) { sk.remove(); });
+    };
+    im.onerror = function () {
+      markDead(art, list);
+      var p = c.parentNode, hadFocus = document.activeElement === c;
+      c.remove();
+      if (p && !$('.card.focusable:not(.more):not(.add)', p) && !$('.skeleton', p) && !p.querySelector('.status')) {
+        p.innerHTML = '';
+        p.appendChild(h('div', 'status', 'No pictures here could be loaded.'));
+      }
+      if (hadFocus) moveFocus('right');
+    };
+    im.src = art.thumb;
     th.appendChild(im);
     if (S.current && S.current.id === art.id) th.appendChild(h('span', 'badge', 'On the wall'));
     if (isFav(art)) th.appendChild(h('span', 'badge fav', '♥'));
@@ -793,7 +858,8 @@
           r.track.appendChild(h('div', 'status', 'This collection could not be reached. Check the internet connection and try again.'));
           return;
         }
-        items.slice(0, 14).forEach(function (a) { r.track.appendChild(card(a, items)); });
+        items.slice(0, 22).forEach(function (a) { r.track.appendChild(card(a, items)); });
+        r.track.appendChild(skeletons(3));
         r.track.appendChild(tileCard('more', '›', 'See all ' + items.length, function () { openCollection(r.c); }));
         if (hadFocus) focusEl($('.focusable', r.track));
       }).then(next);
@@ -816,7 +882,7 @@
       play._activate = play.onclick = function () { playList(items, c.name); };
       var g = grid(items, c.name);
       p.appendChild(g);
-      focusEl($('.card', g) || play);
+      focusEl(play);
     });
   }
 
@@ -848,7 +914,7 @@
       Promise.all([aicSearch(q, 30).catch(function () { return []; }), cmaSearch(q, null, 30).catch(function () { return []; })])
         .then(function (lists) {
           if (seq !== S.renderSeq) return;
-          var items = interleave(lists, 60);
+          var items = interleave(lists, 60).filter(alive);
           results.innerHTML = '';
           if (!items.length) {
             results.appendChild(h('div', 'status', 'No public-domain art matched “' + q + '”. Try a broader word.'));
@@ -862,7 +928,7 @@
           results.appendChild(bar);
           var g = grid(items, q);
           results.appendChild(g);
-          focusEl($('.card', g));
+          focusEl(playBtn);
         });
     }
     focusEl(inp);
@@ -944,6 +1010,7 @@
       S.favorites.length ? 'Your personal gallery. Open any work to change its mat or remove it.' :
         'Open any artwork and choose Add to favourites to build your own gallery here.',
       S.favorites.length ? [play] : []));
+    S.favorites = S.favorites.filter(alive);
     if (S.favorites.length) p.appendChild(grid(S.favorites, 'Favourites'));
   }
 
@@ -963,13 +1030,13 @@
       fmt: function (v) { return v ? 'On' : 'Off'; } },
     { key: 'bezel', label: 'Frame bezel', hint: 'Draws a picture-frame border around the screen', values: ['none', 'white', 'beige', 'teak', 'walnut', 'black'],
       fmt: function (v) { return v === 'none' ? 'None' : v.charAt(0).toUpperCase() + v.slice(1); } },
-    { group: 'Mats' },
-    { key: 'mat', label: 'Default mat style', hint: 'Used for art without its own mat', values: MAT_STYLES.map(function (m) { return m.id; }),
+    { group: 'Picture style' },
+    { key: 'mat', label: 'Picture style', hint: 'Auto fills the TV, or blurs the edges for pictures that don’t fit', values: MAT_STYLES.map(function (m) { return m.id; }),
       fmt: function (v) { return MAT_STYLES.filter(function (m) { return m.id === v; })[0].name; } },
-    { key: 'matBright', label: 'Mat brightness', hint: 'Dims the mat without dimming the art', values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], clamp: true, bar: true, fmt: String },
-    { key: 'matWidth', label: 'Mat width', values: ['slim', 'standard', 'wide'],
+    { key: 'matBright', label: 'Mat brightness', hint: 'Paper mat styles only', values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], clamp: true, bar: true, fmt: String },
+    { key: 'matWidth', label: 'Border width', hint: 'Paper mat and gallery wall', values: ['slim', 'standard', 'wide'],
       fmt: function (v) { return { slim: 'Slim', standard: 'Standard', wide: 'Wide' }[v]; } },
-    { key: 'matColor', label: 'Default mat colour', hint: 'Auto picks a soft tone from each picture', swatch: true, values: MAT_COLORS.map(function (m) { return m.id; }),
+    { key: 'matColor', label: 'Mat colour', hint: 'Paper mat styles only', swatch: true, values: MAT_COLORS.map(function (m) { return m.id; }),
       fmt: function (v) { return MAT_COLORS.filter(function (m) { return m.id === v; })[0].name; } },
     { group: 'Slideshow' },
     { key: 'interval', label: 'Change every', values: [0, 3, 10, 30, 60, 180, 720, 1440], fmt: fmtInterval },
@@ -1056,7 +1123,7 @@
   }
 
   /* ---------------- Detail ---------------- */
-  var dMatDef = { label: 'Mat style', values: MAT_STYLES.map(function (m) { return m.id; }),
+  var dMatDef = { label: 'Picture style', values: MAT_STYLES.map(function (m) { return m.id; }),
     fmt: function (v) { return MAT_STYLES.filter(function (m) { return m.id === v; })[0].name; } };
   var dColDef = { label: 'Mat colour', swatch: true, values: MAT_COLORS.map(function (m) { return m.id; }),
     fmt: function (v) { return MAT_COLORS.filter(function (m) { return m.id === v; })[0].name; } };
@@ -1073,7 +1140,7 @@
   }
   function afterMatChange() {
     var art = S.detail.art;
-    $('#dColor').classList.toggle('disabled', matFor(art).mat === 'none');
+    $('#dColor').classList.toggle('disabled', !usesMat(matFor(art).mat));
     renderPreview();
     if (S.current && S.current.id === art.id) rerenderCurrent();
   }
@@ -1089,7 +1156,7 @@
     $('.d-date').textContent = art.date || '';
     $('#dDel').style.display = art.photo ? '' : 'none';
     buildDetailSteppers();
-    $('#dColor').classList.toggle('disabled', matFor(art).mat === 'none');
+    $('#dColor').classList.toggle('disabled', !usesMat(matFor(art).mat));
     updateDetailButtons();
     renderPreview();
     focusEl($('#dShow'));
@@ -1116,10 +1183,10 @@
       return cfg.mat === 'mix' ? extrasFor(art, d.list, true) : null;
     }).then(function (extras) {
       loadImg(art.thumb, art.full).then(function (im) {
-        if (token === S.pvSeq) compose(pv, asMain(im), cfg, extras);
+        if (token === S.pvSeq) { var mn = asMain(im); mn.thumb = art.thumb; compose(pv, mn, cfg, extras); }
         return loadImg(art.full, art.alt);
       }).then(function (im) {
-        if (token === S.pvSeq) compose(pv, asMain(im), cfg, extras);
+        if (token === S.pvSeq) { var mn = asMain(im); mn.thumb = art.thumb; compose(pv, mn, cfg, extras); }
       }).catch(function () {});
     });
   }
