@@ -2,6 +2,8 @@ package com.atelier.artmode
 
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.Handler
@@ -34,6 +36,8 @@ class ArtBridge(private val ctx: Context, private val web: WebView, private val 
     interface Host {
         fun keepScreenOn(on: Boolean)
         fun exit()
+        /** Makes sure the phone-upload server is running (restarting it if needed). */
+        fun uploadReady(): Boolean = false
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -101,6 +105,14 @@ class ArtBridge(private val ctx: Context, private val web: WebView, private val 
     @JavascriptInterface
     fun uploadUrl(): String = localIp()?.let { "http://$it:${ArtWeb.PORT}" } ?: ""
 
+    /** "ok" when phone upload is available, "noserver" or "nonetwork" otherwise. */
+    @JavascriptInterface
+    fun uploadStatus(): String = when {
+        localIp() == null -> "nonetwork"
+        !host.uploadReady() -> "noserver"
+        else -> "ok"
+    }
+
     @JavascriptInterface
     fun uploadQr(): String {
         val url = uploadUrl()
@@ -140,13 +152,36 @@ class ArtBridge(private val ctx: Context, private val web: WebView, private val 
     @JavascriptInterface
     fun exitApp() = host.exit()
 
-    private fun localIp(): String? = try {
-        Collections.list(NetworkInterface.getNetworkInterfaces())
-            .filter { it.isUp && !it.isLoopback }
-            .flatMap { Collections.list(it.inetAddresses) }
-            .firstOrNull { it is Inet4Address && it.isSiteLocalAddress }
-            ?.hostAddress
-    } catch (e: Exception) {
-        null
+    /**
+     * The TV's address on the home network. Uses the Wi-Fi or Ethernet connection and skips
+     * VPNs and screen-mirroring (Wi-Fi Direct) links, which a phone can't reach.
+     */
+    private fun localIp(): String? {
+        try {
+            val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            @Suppress("DEPRECATION")
+            val nets = cm.allNetworks
+            val home = nets.sortedBy { if (it == cm.activeNetwork) 0 else 1 }.firstOrNull { n ->
+                val caps = cm.getNetworkCapabilities(n) ?: return@firstOrNull false
+                !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
+                    (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) || caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET))
+            }
+            val ip = home?.let { cm.getLinkProperties(it) }?.linkAddresses
+                ?.map { it.address }
+                ?.firstOrNull { it is Inet4Address && !it.isLoopbackAddress }
+                ?.hostAddress
+            if (ip != null) return ip
+        } catch (e: Exception) { /* fall back below */ }
+        return try {
+            Collections.list(NetworkInterface.getNetworkInterfaces())
+                .filter { it.isUp && !it.isLoopback && !it.isVirtual }
+                .filterNot { it.name.startsWith("p2p") || it.name.startsWith("tun") || it.name.startsWith("ppp") || it.name.startsWith("rmnet") }
+                .sortedBy { if (it.name.startsWith("wlan") || it.name.startsWith("eth")) 0 else 1 }
+                .flatMap { Collections.list(it.inetAddresses) }
+                .firstOrNull { it is Inet4Address && it.isSiteLocalAddress }
+                ?.hostAddress
+        } catch (e: Exception) {
+            null
+        }
     }
 }

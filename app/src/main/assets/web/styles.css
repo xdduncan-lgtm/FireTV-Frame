@@ -158,6 +158,8 @@ input.search{flex:1;font:inherit;font-size:2.8vh;padding:1.8vh 2.6vh;border-radi
 .steps p{margin-bottom:2vh}
 .steps .url{font-size:3.6vh;color:#fff;letter-spacing:.02em;margin:1vh 0 3vh}
 .steps .count{color:var(--gilt)}
+.steps .warn{color:#e7a3a3}
+.steps .tips{font-size:1.9vh;color:var(--muted);line-height:1.55;margin-top:1vh}
 
 /* ---------- Detail ---------- */
 #detail{z-index:20;background:rgba(14,14,13,.985);display:flex;align-items:center;padding:0 5vw}

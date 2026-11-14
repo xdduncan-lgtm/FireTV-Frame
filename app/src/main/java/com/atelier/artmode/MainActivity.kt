@@ -40,6 +40,14 @@ class MainActivity : ComponentActivity(), ArtBridge.Host {
 
     override fun onStart() {
         super.onStart()
+        startUploadServer()
+    }
+
+    @Synchronized
+    private fun startUploadServer(): Boolean {
+        if (server?.isAlive == true) return true
+        server?.stop()
+        server = null
         try {
             server = UploadServer(this,
                 onChange = { name, album ->
@@ -54,8 +62,12 @@ class MainActivity : ComponentActivity(), ArtBridge.Host {
             ).also { it.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false) }
         } catch (e: IOException) {
             Log.w("Atelier", "Upload server could not start", e)
+            server = null
         }
+        return server?.isAlive == true
     }
+
+    override fun uploadReady(): Boolean = startUploadServer()
 
     override fun onStop() {
         server?.stop()

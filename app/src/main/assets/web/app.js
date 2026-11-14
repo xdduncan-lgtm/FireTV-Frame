@@ -1201,8 +1201,9 @@
     S.sub = { type: 'upload' }; S.renderSeq++;
     var p = $('#panel');
     p.innerHTML = '';
-    var url = native('uploadUrl') || '';
-    var qr = native('uploadQr') || '';
+    var status = native('uploadStatus');               // also restarts the upload server if it stopped
+    var url = status === 'nonetwork' ? '' : (native('uploadUrl') || '');
+    var qr = url ? (native('uploadQr') || '') : '';
     var done = button('Done', 'primary', function () { renderTab('photos', true); });
     p.appendChild(viewHead('Add photos from your phone', null, [done]));
     var box = h('div', 'upload');
@@ -1216,9 +1217,13 @@
       steps.appendChild(h('p', null, 'Connect your phone to the same Wi-Fi network as this Fire TV, then scan the code or open:'));
       steps.appendChild(h('div', 'url', url));
       steps.appendChild(h('p', null, 'Choose your photos and tap Send. They show up here as soon as they arrive.'));
+      if (status === 'noserver') steps.appendChild(h('p', 'warn', 'The photo receiver didn’t start. Press Back and open this page again, or restart Atelier.'));
       var cnt = h('p', 'count', photoCountText());
       cnt.id = 'photoCount';
       steps.appendChild(cnt);
+      steps.appendChild(h('p', 'tips', 'Page won’t open on your phone? Make sure the phone is on the same Wi-Fi as the TV, not a guest network ' +
+        'and not mobile data. Turn off any VPN on the phone. Keep Atelier open on the TV while sending. If your phone warns that the ' +
+        'connection isn’t secure, that’s expected for a device on your home network: choose to continue.'));
     } else if (NATIVE) {
       steps.appendChild(h('p', null, 'This Fire TV is not connected to a local network. Connect it to Wi-Fi or Ethernet and open this page again.'));
     } else {
