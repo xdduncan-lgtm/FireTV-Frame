@@ -27,6 +27,13 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
     linear-gradient(180deg, rgba(255,248,236,.04) 0, rgba(0,0,0,.09) 100%);
   box-shadow:inset 0 0 9em rgba(0,0,0,.16)}
 .card.pending{display:none}
+.card.pick .check{position:absolute;top:1vh;right:1vh;width:3.6vh;height:3.6vh;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-size:2.2vh;background:rgba(0,0,0,.45);color:transparent;border:.25vh solid rgba(255,255,255,.7)}
+.card.pick.picked .check{background:var(--gilt);color:#1b1a17;border-color:var(--gilt)}
+.card.pick.picked .thumb{box-shadow:0 0 0 .45vh var(--gilt)}
+.card.pick:focus .thumb,.card.pick.focused .thumb{box-shadow:0 0 0 .45vh var(--focus), 0 1.6vh 4vh rgba(0,0,0,.65)}
+.album-tile .thumb .big{position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:6vh;color:#5a5750}
+.album-tile .badge{left:auto;right:1vh;top:auto;bottom:1vh}
 .music-tile .thumb{display:flex;flex-direction:column;justify-content:flex-end;padding:2vh 2.2vh;border:1px solid rgba(255,255,255,.06)}
 .mt-name{font-family:Georgia,"Noto Serif","Droid Serif",serif;font-size:2.7vh;color:#f3efe7;line-height:1.15}
 .mt-note{font-size:1.65vh;color:rgba(243,239,231,.7);margin-top:.6vh;line-height:1.35}
@@ -76,7 +83,7 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .brand{display:flex;align-items:center;font-size:2.4vh;color:var(--muted);letter-spacing:.04em;margin-right:4vw}
 .brand-mark{display:inline-block;width:3.2vh;height:2.2vh;border:.35vh solid var(--gilt);margin-right:1.4vh;box-shadow:inset 0 0 0 .4vh #1a1a19, inset 0 0 0 1vh rgba(205,185,143,.35)}
 .tabs{display:flex}
-.tab{font-size:2.7vh;color:var(--muted);padding:1.2vh 2.6vh;border-radius:4vh;margin-right:1vh;position:relative;transition:background .15s,color .15s}
+.tab{font-size:2.5vh;color:var(--muted);padding:1.2vh 2.2vh;border-radius:4vh;margin-right:1vh;position:relative;transition:background .15s,color .15s}
 .tab.active{color:var(--ink)}
 .tab.active::after{content:"";position:absolute;left:2.6vh;right:2.6vh;bottom:.3vh;height:.3vh;background:var(--gilt);border-radius:.3vh}.tab:focus,.tab.focused{background:var(--focus);color:#111}.tab:focus::after,.tab.focused::after{display:none}
 .clock{margin-left:auto;font-size:3vh;font-weight:300;color:var(--ink)}

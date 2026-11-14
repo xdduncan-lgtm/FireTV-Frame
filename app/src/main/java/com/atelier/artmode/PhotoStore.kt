@@ -60,7 +60,7 @@ object PhotoStore {
         bmp.recycle()
     }
 
-    /** Decodes with downsampling so the long edge is at most ~maxEdge, honouring EXIF rotation. */
+    /** Decodes with downsampling so the long edge is at most ~maxEdge, honoring EXIF rotation. */
     private fun decode(f: File, maxEdge: Int): Bitmap? {
         val b = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(f.path, b)

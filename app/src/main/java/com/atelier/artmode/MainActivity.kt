@@ -9,6 +9,7 @@ import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import fi.iki.elonen.NanoHTTPD
+import org.json.JSONObject
 import java.io.IOException
 
 class MainActivity : ComponentActivity(), ArtBridge.Host {
@@ -40,9 +41,17 @@ class MainActivity : ComponentActivity(), ArtBridge.Host {
     override fun onStart() {
         super.onStart()
         try {
-            server = UploadServer(this) {
-                runOnUiThread { web.evaluateJavascript("window.onPhotosChanged && window.onPhotosChanged()", null) }
-            }.also { it.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false) }
+            server = UploadServer(this,
+                onChange = { name, album ->
+                    runOnUiThread {
+                        web.evaluateJavascript("window.onPhotosChanged && window.onPhotosChanged(" +
+                            JSONObject.quote(name) + "," + JSONObject.quote(album) + ")", null)
+                    }
+                },
+                onAiKey = { key ->
+                    runOnUiThread { web.evaluateJavascript("window.onAiKey && window.onAiKey(" + JSONObject.quote(key) + ")", null) }
+                }
+            ).also { it.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false) }
         } catch (e: IOException) {
             Log.w("Atelier", "Upload server could not start", e)
         }

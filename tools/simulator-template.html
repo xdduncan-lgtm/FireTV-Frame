@@ -120,7 +120,7 @@
         <option value="0.74" selected>Medium</option>
         <option value="0.86">Large</option>
       </select></label>
-    <label class="ctl"><span>Wall colour</span>
+    <label class="ctl"><span>Wall color</span>
       <select id="wall">
         <option value="#d6c4a5" selected>Warm beige</option>
         <option value="#e9e6df">Off-white</option>
@@ -131,6 +131,8 @@
 
   <div class="sec">
     <h2>TEST YOUR PHOTOS</h2>
+    <label class="ctl"><span>Album (optional)</span>
+      <input id="simAlbum" type="text" placeholder="e.g. Family" style="width:100%;padding:7px 8px;background:#26241f;color:#efece6;border:1px solid #2e2c29;border-radius:6px"></label>
     <label class="btn">Add photos from this computer
       <input id="files" type="file" accept="image/*" multiple></label>
     <p class="note">They appear under My Photos for this session only. Nothing is uploaded.</p>
@@ -139,7 +141,7 @@
   <div class="sec">
     <h2>APP</h2>
     <button class="btn" id="reload">Reload app</button>
-    <button class="btn" id="reset">Reset app (clear settings and favourites)</button>
+    <button class="btn" id="reset">Reset app (clear settings and favorites)</button>
     <p class="note">The Art Store and music need an internet connection. Phone upload and opening Spotify, Amazon Music or Apple Music only work on the Fire TV.</p>
   </div>
 </aside>
@@ -221,7 +223,7 @@
   document.getElementById('files').addEventListener('change', function (e) {
     var files = Array.prototype.slice.call(e.target.files), out = [];
     function next() {
-      if (!files.length) { if (out.length) send({ photos: out }); e.target.value = ''; return; }
+      if (!files.length) { if (out.length) send({ photos: out, album: document.getElementById('simAlbum').value.trim() }); e.target.value = ''; return; }
       var f = files.shift(), url = URL.createObjectURL(f), img = new Image();
       img.onload = function () {
         var s = Math.min(1, 2560 / Math.max(img.naturalWidth, img.naturalHeight));
@@ -239,7 +241,7 @@
 
   document.getElementById('reload').addEventListener('click', function () { app.srcdoc = APP_HTML + ' '; setTimeout(function () { app.srcdoc = APP_HTML; }, 0); });
   document.getElementById('reset').addEventListener('click', function () {
-    if (confirm('Clear the simulator’s settings, favourites and history?')) send({ reset: true });
+    if (confirm('Clear the simulator’s settings, favorites and history?')) send({ reset: true });
   });
 })();
 </script>

@@ -23,6 +23,11 @@ import java.net.URL
 import java.util.Collections
 import java.util.concurrent.Executors
 
+/** Latest album list from the web app, served to the phone upload page. */
+object AlbumCache {
+    @Volatile var json: String = "[]"
+}
+
 /** Methods the web UI can call through `window.Android`. */
 class ArtBridge(private val ctx: Context, private val web: WebView, private val host: Host) {
 
@@ -88,6 +93,10 @@ class ArtBridge(private val ctx: Context, private val web: WebView, private val 
 
     @JavascriptInterface
     fun deletePhoto(name: String): Boolean = PhotoStore.delete(ctx, name)
+
+    /** The web app shares its album list so the phone upload page can offer it. */
+    @JavascriptInterface
+    fun setAlbums(json: String) { AlbumCache.json = json }
 
     @JavascriptInterface
     fun uploadUrl(): String = localIp()?.let { "http://$it:${ArtWeb.PORT}" } ?: ""

@@ -76,7 +76,7 @@
 
   var DEFAULTS = {
     brightness: 7, tone: 0, interval: 0, playFrom: 'current', order: 'sequential', showInfo: true,
-    mat: 'smart', fillOnly: 0, musicSource: 'off', musicStyle: 'classical', musicVolume: 4, musicAnnounce: true, musicApp: '',
+    mat: 'smart', fillOnly: 0, aiStyle: 'oil', aiCount: 8, aiKey: '', musicSource: 'off', musicStyle: 'classical', musicVolume: 4, musicAnnounce: true, musicApp: '',
     matColor: 'auto', matBright: 6, matWidth: 'standard', bezel: 'none', texture: true, sleepAfter: 4, nightMode: false
   };
 
@@ -298,7 +298,8 @@
         };
         im.onerror = function () { if (done) return; done = true; clearTimeout(t); i++; attempt(); };
         im.decoding = 'async';
-        im.src = srcs[i];
+        if (isGen(srcs[i])) genSrc(srcs[i]).then(function (u) { im.src = u; }, function () { im.onerror(); });
+        else im.src = srcs[i];
       }
       attempt();
     });
@@ -359,7 +360,8 @@
         } catch (e) { fin(null); }
       };
       im.onerror = function () { fin(null); };
-      im.src = art.thumb;
+      if (isGen(art.thumb)) genSrc(art.thumb).then(function (u) { im.src = u; }, function () { fin(null); });
+      else im.src = art.thumb;
     });
   }
   function resolveCfg(art) {
@@ -531,7 +533,7 @@
     }).then(function (im) {
       if (token !== S.showSeq) return false;
       var main = asMain(im);
-      main.thumb = art.thumb;
+      main.thumb = isGen(art.thumb) ? main.src : art.thumb;
       noteAspect(art, main.w, main.h);
       if (opts.inStep && !fits(art)) { S.bad[art.id] = true; return false; }
       var extrasP = cfg.mat === 'mix' ? extrasFor(art, playlist(), false) : Promise.resolve(null);
@@ -559,7 +561,7 @@
     }).catch(function () {
       if (token !== S.showSeq) return false;
       S.bad[art.id] = true;
-      if (Object.keys(S.dead).length || S.current) {
+      if (!art.ai && (Object.keys(S.dead).length || S.current)) {
         // Only blacklist for good if the thumbnail is also unreadable (not just a network blip).
         loadImg(art.thumb).catch(function () { if (navigator.onLine !== false) markDead(art); });
       }
@@ -590,6 +592,7 @@
     if (pf === 'favorites') l = S.favorites;
     else if (pf === 'photos') l = S.photos;
     else if (pf === 'saved') l = S.favorites.concat(S.photos);
+    else if (S.ctx.album && albumById(S.ctx.album)) l = albumPhotos(albumById(S.ctx.album));
     else l = S.ctx.list;
     if (!l || !l.length) l = (S.ctx.list && S.ctx.list.length) ? S.ctx.list : S.favorites.concat(S.photos);
     var all = (l || []).filter(alive), ok = all.filter(fits);
@@ -756,10 +759,11 @@
       if (p) $$('.skeleton', p).forEach(function (sk) { sk.remove(); });
     };
     im.onerror = function () {
-      markDead(art, list);
+      if (!art.ai) markDead(art, list);
       dropCard(c, null, art, 'No pictures here could be loaded.');
     };
-    im.src = art.thumb;
+    if (isGen(art.thumb)) genSrc(art.thumb).then(function (u) { im.src = u; }, function () { im.onerror(); });
+    else im.src = art.thumb;
     th.appendChild(im);
     if (S.current && S.current.id === art.id) th.appendChild(h('span', 'badge', 'On the wall'));
     if (isFav(art)) th.appendChild(h('span', 'badge fav', '♥'));
@@ -845,7 +849,7 @@
 
   var tabTimer;
   var TAB_RENDER = { store: renderStore, photos: renderPhotos, favorites: renderFavorites,
-    music: function (p) { renderMusic(p); }, settings: renderSettings };
+    ai: function (p) { renderAi(p); }, music: function (p) { renderMusic(p); }, settings: renderSettings };
 
   function renderTab(tab, focusContent) {
     clearTimeout(tabTimer);
@@ -869,7 +873,7 @@
   });
 
   function setContext(list, name) {
-    S.ctx = { list: list.slice(0, 120), name: name || '' };
+    S.ctx = { list: list.slice(0, 120), name: name || '', album: null };
     store.set('ctx', S.ctx);
   }
 
@@ -1010,14 +1014,187 @@
     });
   }
 
+  /* Albums: groups of your own photos. Stored on the TV by photo file name. */
+  S.albums = store.get('albums', []);
+  function saveAlbums() {
+    store.set('albums', S.albums);
+    native('setAlbums', JSON.stringify(S.albums.map(function (a) { return { id: a.id, name: a.name, count: a.photos.length }; })));
+  }
+  function albumById(id) { return S.albums.filter(function (a) { return a.id === id; })[0]; }
+  function albumByName(name) {
+    var n = String(name || '').trim().toLowerCase();
+    return S.albums.filter(function (a) { return a.name.toLowerCase() === n; })[0];
+  }
+  function newAlbum(name) {
+    name = String(name || '').trim().slice(0, 60);
+    if (!name) return null;
+    var a = albumByName(name);
+    if (a) return a;
+    a = { id: 'al' + Date.now() + Math.floor(Math.random() * 1000), name: name, photos: [], created: Date.now() };
+    S.albums.push(a);
+    saveAlbums();
+    return a;
+  }
+  // Photos of an album, newest first, skipping any that were deleted from the TV.
+  function albumPhotos(a) {
+    if (!a) return [];
+    var byName = {};
+    S.photos.forEach(function (ph) { byName[ph.photo] = ph; });
+    return a.photos.map(function (n) { return byName[n]; }).filter(Boolean);
+  }
+  function photoCount(n) { return n + ' photo' + (n === 1 ? '' : 's'); }
+  function playAlbum(a) {
+    var list = albumPhotos(a);
+    if (!list.length) { toast('“' + a.name + '” has no photos yet. Choose “Add or remove photos”.'); return; }
+    playList(list, a.name);
+    S.ctx.album = a.id; store.set('ctx', S.ctx);
+  }
+
+  function albumTile(a) {
+    var list = albumPhotos(a), c = h('div', 'card focusable album-tile');
+    c.tabIndex = -1;
+    var th = h('div', 'thumb');
+    if (list.length) {
+      var im = document.createElement('img');
+      im.alt = ''; im.decoding = 'async'; im.src = list[0].thumb;
+      th.appendChild(im);
+    } else {
+      th.appendChild(h('div', 'big', '▢'));
+    }
+    th.appendChild(h('span', 'badge', photoCount(list.length)));
+    c.appendChild(th);
+    var m = h('div', 'meta');
+    m.appendChild(h('div', 't', a.name));
+    m.appendChild(h('div', 'a', 'Album'));
+    c.appendChild(m);
+    c._activate = c.onclick = function () { openAlbum(a.id); };
+    return c;
+  }
+
   function renderPhotos(p) {
     refreshPhotos();
-    var play = button('Play my photos', 'primary', function () { playList(S.photos, 'My Photos'); });
+    var play = button('Play all photos', 'primary', function () { playList(S.photos, 'My Photos'); });
+    var mk = button('New album', '', function () { askName('New album', 'Name your album, for example “Family”, “Christmas 2026” or “Lake trip”.', '', function (name) {
+      var a = newAlbum(name);
+      if (a) { toast('Album “' + a.name + '” created'); openAlbum(a.id); }
+    }); });
     p.appendChild(viewHead('My Photos',
-      S.photos.length ? S.photos.length + ' photo' + (S.photos.length === 1 ? '' : 's') + ' on this TV.' :
-        'Send pictures from your phone and they appear here, ready to frame.', S.photos.length ? [play] : []));
+      S.photos.length ? photoCount(S.photos.length) + ' on this TV' + (S.albums.length ? ', in ' + S.albums.length + ' album' + (S.albums.length === 1 ? '' : 's') : '') + '.' :
+        'Send pictures from your phone and they appear here, ready to frame.', S.photos.length ? [play, mk] : [mk]));
+
+    p.appendChild(h('div', 'group-title', 'Albums'));
+    var ag = h('div', 'grid');
+    S.albums.forEach(function (a) { ag.appendChild(albumTile(a)); });
+    ag.appendChild(tileCard('add', '+', 'New album', mk._activate));
+    p.appendChild(ag);
+
+    p.appendChild(h('div', 'group-title', 'All photos'));
     var add = tileCard('add', '+', 'Add from phone', openUpload);
     p.appendChild(grid(S.photos.filter(fits), 'My Photos', add));
+  }
+
+  function openAlbum(id) {
+    var a = albumById(id);
+    if (!a) { renderTab('photos', true); return; }
+    S.sub = { type: 'album', id: id }; S.renderSeq++;
+    var p = $('#panel');
+    p.innerHTML = ''; p.scrollTop = 0;
+    var list = albumPhotos(a);
+    var play = button('Play this album', 'primary', function () { playAlbum(a); });
+    var edit = button('Add or remove photos', '', function () { pickAlbumPhotos(a); });
+    var ren = button('Rename', '', function () {
+      askName('Rename album', 'Type a new name for “' + a.name + '”.', a.name, function (name) {
+        name = name.trim().slice(0, 60);
+        if (!name) return;
+        var other = albumByName(name);
+        if (other && other !== a) { toast('You already have an album called “' + other.name + '”'); openAlbum(a.id); return; }
+        a.name = name; saveAlbums(); openAlbum(a.id);
+      });
+    });
+    var del = button('Delete album', 'danger', function () {
+      if (del._armed) {
+        S.albums = S.albums.filter(function (x) { return x !== a; }); saveAlbums();
+        toast('Album deleted. Your photos are still in My Photos.');
+        renderTab('photos', true);
+        return;
+      }
+      del._armed = true; del.textContent = 'Press again to delete';
+      setTimeout(function () { del._armed = false; del.textContent = 'Delete album'; }, 4000);
+    });
+    p.appendChild(viewHead(a.name, photoCount(list.length) + '. Deleting the album keeps the photos.', [play, edit, ren, del]));
+    if (list.length) p.appendChild(grid(list.filter(fits), a.name));
+    else p.appendChild(h('div', 'status', 'No photos yet. Choose “Add or remove photos”, or pick this album on your phone when sending photos.'));
+    focusEl(list.length ? play : edit);
+  }
+
+  // Selection grid: OK toggles a photo in or out of the album.
+  function pickAlbumPhotos(a) {
+    S.sub = { type: 'albumpick', id: a.id }; S.renderSeq++;
+    var p = $('#panel');
+    p.innerHTML = ''; p.scrollTop = 0;
+    var chosen = {};
+    a.photos.forEach(function (n) { chosen[n] = true; });
+    var countEl;
+    var done = button('Done', 'primary', function () {
+      a.photos = S.photos.filter(function (ph) { return chosen[ph.photo]; }).map(function (ph) { return ph.photo; });
+      saveAlbums();
+      toast('“' + a.name + '” now has ' + photoCount(a.photos.length));
+      openAlbum(a.id);
+    });
+    p.appendChild(viewHead('Choose photos for “' + a.name + '”', 'Press OK on a photo to add or remove it, then choose Done.', [done]));
+    countEl = h('div', 'status music-status');
+    p.appendChild(countEl);
+    function updateCount() {
+      var n = Object.keys(chosen).filter(function (k) { return chosen[k]; }).length;
+      countEl.textContent = photoCount(n) + ' selected';
+    }
+    var g = h('div', 'grid');
+    S.photos.forEach(function (ph) {
+      var c = h('div', 'card focusable pick' + (chosen[ph.photo] ? ' picked' : ''));
+      c.tabIndex = -1;
+      var th = h('div', 'thumb'), im = document.createElement('img');
+      im.alt = ''; im.decoding = 'async'; im.src = ph.thumb;
+      th.appendChild(im);
+      th.appendChild(h('span', 'check', '✓'));
+      c.appendChild(th);
+      var m = h('div', 'meta'); m.appendChild(h('div', 'a', ph.artist)); c.appendChild(m);
+      c._activate = c.onclick = function () {
+        chosen[ph.photo] = !chosen[ph.photo];
+        c.classList.toggle('picked', !!chosen[ph.photo]);
+        updateCount();
+      };
+      g.appendChild(c);
+    });
+    if (!S.photos.length) p.appendChild(h('div', 'status', 'There are no photos on this TV yet. Send some from your phone first.'));
+    p.appendChild(g);
+    updateCount();
+    focusEl($('.card', g) || done);
+  }
+
+  // Small text-entry screen used for album names.
+  function askName(title, text, value, cb) {
+    var back = S.sub;
+    S.sub = { type: 'askname' }; S.renderSeq++;
+    var p = $('#panel');
+    p.innerHTML = ''; p.scrollTop = 0;
+    p.appendChild(viewHead(title, text));
+    var wrap = h('div', 'search-wrap'), inp = document.createElement('input');
+    inp.type = 'text'; inp.className = 'search focusable'; inp.placeholder = 'Album name'; inp.value = value || '';
+    inp.maxLength = 60;
+    var ok = button('Save', 'primary', run);
+    wrap.appendChild(inp); wrap.appendChild(ok);
+    p.appendChild(wrap);
+    inp._activate = function () { inp.focus(); inp.click(); };
+    inp.addEventListener('keydown', function (e) {
+      if (e.keyCode === 13 && inp.value.trim()) { e.preventDefault(); e.stopPropagation(); run(); }
+    });
+    function run() {
+      var v = inp.value.trim();
+      if (!v) { inp.focus(); return; }
+      inp.blur();
+      cb(v);
+    }
+    focusEl(inp);
   }
 
   function openUpload() {
@@ -1056,12 +1233,17 @@
     return S.photos.length === 1 ? '1 photo on this TV' : S.photos.length + ' photos on this TV';
   }
 
-  window.onPhotosChanged = function () {
+  window.onPhotosChanged = function (name, album) {
     refreshPhotos();
+    if (name && album) {
+      var a = newAlbum(album);
+      if (a && a.photos.indexOf(name) < 0) { a.photos.unshift(name); saveAlbums(); }
+    }
     var c = $('#photoCount');
     if (c) c.textContent = photoCountText();
-    toast('New photo received');
+    toast(album ? 'New photo added to “' + album + '”' : 'New photo received');
     if (S.menuOpen && S.tab === 'photos' && !S.sub) renderTab('photos', false);
+    if (S.menuOpen && S.sub && S.sub.type === 'album') openAlbum(S.sub.id);
   };
 
   /* Favorites */
@@ -1256,10 +1438,10 @@
       return cfg.mat === 'mix' ? extrasFor(art, d.list, true) : null;
     }).then(function (extras) {
       loadImg(art.thumb, art.full).then(function (im) {
-        if (token === S.pvSeq) { var mn = asMain(im); mn.thumb = art.thumb; compose(pv, mn, cfg, extras); }
+        if (token === S.pvSeq) { var mn = asMain(im); mn.thumb = isGen(art.thumb) ? mn.src : art.thumb; compose(pv, mn, cfg, extras); }
         return loadImg(art.full, art.alt);
       }).then(function (im) {
-        if (token === S.pvSeq) { var mn = asMain(im); mn.thumb = art.thumb; compose(pv, mn, cfg, extras); }
+        if (token === S.pvSeq) { var mn = asMain(im); mn.thumb = isGen(art.thumb) ? mn.src : art.thumb; compose(pv, mn, cfg, extras); }
       }).catch(function () {});
     });
   }
@@ -1300,6 +1482,8 @@
     if (!NATIVE) S.simPhotos = S.simPhotos.filter(function (p) { return p.name !== art.photo; });
     S.favorites = S.favorites.filter(function (a) { return a.id !== art.id; }); saveFavs();
     S.ctx.list = S.ctx.list.filter(function (a) { return a.id !== art.id; }); store.set('ctx', S.ctx);
+    S.albums.forEach(function (al) { al.photos = al.photos.filter(function (n) { return n !== art.photo; }); });
+    saveAlbums();
     refreshPhotos();
     toast('Photo deleted');
     var wasCurrent = S.current && S.current.id === art.id;
@@ -1308,6 +1492,559 @@
     renderTab(S.tab, true);
     if (wasCurrent) step(1);
   };
+
+  /* ---------------- Studio art (drawn on the TV) ---------------- */
+  var STUDIO_THEMES = [
+    { type: 'mountains', name: 'Mountain sunsets', note: 'Layered peaks at dusk', bg: ['#a0614a', '#2a1a22'] },
+    { type: 'mist', name: 'Misty mountains', note: 'Soft ridges and morning haze', bg: ['#7d8c86', '#26302d'] },
+    { type: 'ocean', name: 'Ocean horizons', note: 'Calm seas and low sun', bg: ['#4a6d86', '#16222b'] },
+    { type: 'hills', name: 'Tuscan hills', note: 'Rolling hills and cypress trees', bg: ['#a07a46', '#2e2214'] },
+    { type: 'dunes', name: 'Desert dunes', note: 'Warm sand and long shadows', bg: ['#b07a50', '#33200f'] },
+    { type: 'forest', name: 'Pine forests in fog', note: 'Quiet woods, layer on layer', bg: ['#4f6258', '#18201c'] },
+    { type: 'stars', name: 'Starry nights', note: 'Milky Way over the hills', bg: ['#2a3060', '#0a0c1c'] },
+    { type: 'colorfield', name: 'Color fields', note: 'Soft-edged abstract color', bg: ['#8a4a40', '#2a1512'] },
+    { type: 'bauhaus', name: 'Bauhaus geometry', note: 'Mid-century shapes and color', bg: ['#b05a3c', '#22303a'] }
+  ];
+  var SKIES = [
+    { name: 'dusk', top: '#2c3560', hor: '#ec9a72', sun: '#ffe2a8', far: '#7a5468', near: '#1d1726' },
+    { name: 'dawn', top: '#8fa2c4', hor: '#f6c9a8', sun: '#fff3dc', far: '#a58a98', near: '#3a2c3c' },
+    { name: 'gold', top: '#d9a25e', hor: '#f7e1b0', sun: '#fff7e2', far: '#b98a5e', near: '#3e2a1e' },
+    { name: 'day', top: '#86aed0', hor: '#e6eef0', sun: '#fffbe8', far: '#93aab6', near: '#2c4250' },
+    { name: 'sage', top: '#b9c2b0', hor: '#efe8d2', sun: '#fff7e0', far: '#9ea88f', near: '#36412f' },
+    { name: 'rose', top: '#6d5a86', hor: '#f2b7a6', sun: '#ffe9d6', far: '#9a7088', near: '#2c2034' }
+  ];
+  function rng(seed) {
+    var a = seed >>> 0;
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      var t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function hexRgb(x) { var n = parseInt(x.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; }
+  function mix(a, b, t) {
+    var A = hexRgb(a), B = hexRgb(b);
+    return 'rgb(' + Math.round(A[0] + (B[0] - A[0]) * t) + ',' + Math.round(A[1] + (B[1] - A[1]) * t) + ',' + Math.round(A[2] + (B[2] - A[2]) * t) + ')';
+  }
+  function mixHex(a, b, t) {
+    var A = hexRgb(a), B = hexRgb(b);
+    return '#' + [0, 1, 2].map(function (i) { return ('0' + Math.round(A[i] + (B[i] - A[i]) * t).toString(16)).slice(-2); }).join('');
+  }
+
+  // Draws one artwork. The same type and seed always give the same picture, so only the seed is saved.
+  function paintStudio(type, seed, W, H) {
+    var c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    var x = c.getContext('2d'), r = rng(seed), sky = SKIES[Math.floor(r() * SKIES.length)];
+    function pick(arr) { return arr[Math.floor(r() * arr.length)]; }
+    function skyGrad(top, hor, yh) {
+      var g = x.createLinearGradient(0, 0, 0, yh);
+      g.addColorStop(0, top); g.addColorStop(1, hor);
+      x.fillStyle = g; x.fillRect(0, 0, W, H);
+    }
+    function sun(cx, cy, rad, col, glow) {
+      var g = x.createRadialGradient(cx, cy, rad * 0.2, cx, cy, rad * glow);
+      g.addColorStop(0, col); g.addColorStop(0.25, col); g.addColorStop(1, 'rgba(255,255,255,0)');
+      x.globalAlpha = 0.55; x.fillStyle = g; x.fillRect(0, 0, W, H); x.globalAlpha = 1;
+      x.fillStyle = col; x.beginPath(); x.arc(cx, cy, rad, 0, Math.PI * 2); x.fill();
+    }
+    function ridge(base, amp, color, waves, jag) {
+      var ph = [], fr = [];
+      for (var i = 0; i < waves; i++) { ph.push(r() * 6.28); fr.push((1 + r() * 3) * (i + 1)); }
+      function yAt(px) {
+        var v = 0;
+        for (var j = 0; j < waves; j++) v += Math.sin(px / W * fr[j] * Math.PI + ph[j]) / (j + 1);
+        return base - v * amp;
+      }
+      x.fillStyle = color; x.beginPath(); x.moveTo(0, H);
+      for (var px = 0; px <= W; px += 4) x.lineTo(px, yAt(px) + (jag ? (r() - 0.5) * jag * H * 0.002 : 0));
+      x.lineTo(W, H); x.closePath(); x.fill();
+      return yAt;
+    }
+    function haze(y, h, col, a) {
+      var g = x.createLinearGradient(0, y - h, 0, y + h);
+      var rgb = hexRgb(col).join(',');
+      g.addColorStop(0, 'rgba(' + rgb + ',0)'); g.addColorStop(0.5, 'rgba(' + rgb + ',1)'); g.addColorStop(1, 'rgba(' + rgb + ',0)');
+      x.globalAlpha = a; x.fillStyle = g; x.fillRect(0, y - h, W, h * 2); x.globalAlpha = 1;
+    }
+    function pine(px, base, h, col) {
+      x.fillStyle = col; x.beginPath();
+      var w = h * 0.32;
+      for (var t = 0; t < 4; t++) {
+        var y1 = base - h * (0.18 + t * 0.22), y0 = base - h * (t * 0.2);
+        x.moveTo(px - w * (1 - t * 0.2), y0); x.lineTo(px, y1 - h * 0.1); x.lineTo(px + w * (1 - t * 0.2), y0);
+      }
+      x.fill();
+      x.fillRect(px - h * 0.02, base - h * 0.08, h * 0.04, h * 0.1);
+    }
+    var hor, i;
+    switch (type) {
+      case 'mist':
+      case 'mountains':
+        if (type === 'mist') sky = pick([SKIES[1], SKIES[3], SKIES[4]]);
+        hor = H * (0.5 + r() * 0.12);
+        skyGrad(sky.top, sky.hor, hor);
+        sun(W * (0.25 + r() * 0.5), hor - H * (0.08 + r() * 0.15), H * 0.055, sky.sun, 5);
+        var n = 6;
+        for (i = 0; i < n; i++) {
+          var t = i / (n - 1);
+          ridge(hor + H * 0.06 * i + H * 0.02, H * (0.12 - t * 0.05), mix(mixHex(sky.far, sky.hor, 0.45), sky.near, t), 4, type === 'mist' ? 0 : 1);
+          if (i < n - 2) haze(hor + H * 0.06 * i + H * 0.05, H * 0.06, sky.hor, type === 'mist' ? 0.45 : 0.2);
+        }
+        break;
+      case 'ocean':
+        hor = H * (0.52 + r() * 0.08);
+        skyGrad(sky.top, sky.hor, hor);
+        var sx = W * (0.3 + r() * 0.4);
+        sun(sx, hor - H * (0.02 + r() * 0.1), H * 0.05, sky.sun, 6);
+        var sg = x.createLinearGradient(0, hor, 0, H);
+        sg.addColorStop(0, mix(sky.hor, sky.far, 0.5)); sg.addColorStop(1, sky.near);
+        if (r() > 0.4) ridge(hor + 2, H * 0.02, mix(sky.far, sky.hor, 0.3), 3, 0);
+        x.fillStyle = sg; x.fillRect(0, hor, W, H - hor);
+        for (var k = 0; k < 900; k++) {
+          var yy = hor + Math.pow(r(), 1.6) * (H - hor), spread = (yy - hor) / (H - hor);
+          var xx = sx + (r() - 0.5) * W * (0.08 + spread * 0.5);
+          x.globalAlpha = 0.25 * (1 - spread * 0.6); x.fillStyle = sky.sun;
+          x.fillRect(xx, yy, W * (0.004 + r() * 0.02) * (0.5 + spread), Math.max(1, H * 0.002));
+        }
+        x.globalAlpha = 1;
+        break;
+      case 'hills':
+        sky = pick([SKIES[2], SKIES[1], SKIES[4], SKIES[0]]);
+        hor = H * 0.48;
+        skyGrad(sky.top, sky.hor, hor + H * 0.1);
+        sun(W * (0.2 + r() * 0.6), hor - H * 0.12, H * 0.045, sky.sun, 5);
+        var greens = ['#a5a46a', '#86894f', '#6a7240', '#4f5a31', '#3a4524'];
+        for (var hi = 0; hi < 5; hi++) {
+          var base = hor + H * (0.04 + hi * 0.1);
+          if (hi > 0) haze(base - H * 0.03, H * 0.035, sky.hor, 0.16);
+          var yAt = ridge(base, H * 0.05, mix(mixHex(greens[hi], sky.hor, 0.5 - hi * 0.1), greens[hi], hi / 4), 3, 0);
+          if (hi > 0 && hi < 4) {
+            var trees = 3 + Math.floor(r() * 6), groupX = r() * W;
+            for (var ti = 0; ti < trees; ti++) {
+              var tx = (groupX + (r() - 0.5) * W * 0.35 + W) % W, th = H * (0.05 + hi * 0.035), ty = yAt(tx) + th * 0.08;
+              x.fillStyle = mixHex('#2c3820', sky.hor, 0.4 - hi * 0.1);
+              x.beginPath();
+              if (x.ellipse) x.ellipse(tx, ty - th * 0.5, th * 0.11, th * 0.5, 0, 0, Math.PI * 2);
+              else x.arc(tx, ty - th * 0.5, th * 0.15, 0, Math.PI * 2);
+              x.fill();
+            }
+          }
+        }
+        break;
+      case 'dunes':
+        sky = pick([SKIES[2], SKIES[0], SKIES[5], SKIES[3]]);
+        hor = H * 0.5;
+        skyGrad(sky.top, sky.hor, hor);
+        sun(W * (0.15 + r() * 0.7), hor - H * 0.1, H * 0.05, sky.sun, 5);
+        var sand = ['#e2b07c', '#d49a63', '#c4844e', '#a86c3c', '#8a5530'];
+        for (var di = 0; di < 5; di++) {
+          var by = hor + H * (0.02 + di * 0.1);
+          var lg = x.createLinearGradient(0, 0, W, 0);
+          var lit = mixHex(sand[di], sky.sun, 0.25), shade = mixHex(sand[di], '#3a2016', 0.35);
+          if (r() > 0.5) { lg.addColorStop(0, lit); lg.addColorStop(1, shade); } else { lg.addColorStop(0, shade); lg.addColorStop(1, lit); }
+          ridge(by, H * 0.06, lg, 2, 0);
+        }
+        break;
+      case 'forest':
+        sky = pick([SKIES[3], SKIES[4], SKIES[1]]);
+        skyGrad(mixHex(sky.top, '#ffffff', 0.25), mixHex(sky.hor, '#ffffff', 0.3), H);
+        var layers = 5, deep = pick(['#1f3328', '#22302f', '#2a2f26']);
+        for (var li = 0; li < layers; li++) {
+          var lt = li / (layers - 1), lb = H * (0.55 + lt * 0.42), col = mix(mixHex(sky.hor, '#ffffff', 0.2), deep, 0.25 + lt * 0.75);
+          x.fillStyle = col; x.fillRect(0, lb - H * 0.02, W, H);
+          var count = 18 + li * 6;
+          for (var pi = 0; pi < count; pi++) pine(r() * W, lb, H * (0.12 + lt * 0.22) * (0.7 + r() * 0.6), col);
+          if (li < layers - 1) haze(lb - H * 0.05, H * 0.07, mixHex(sky.hor, '#ffffff', 0.4), 0.4);
+        }
+        break;
+      case 'stars':
+        var top = pick(['#060a1c', '#0b0f26', '#0d0a1e']), low = pick(['#26305a', '#3a2f5a', '#1f3a52']);
+        skyGrad(top, low, H * 0.85);
+        x.save(); x.translate(W / 2, H / 2); x.rotate(-0.5 + r());
+        var band = x.createLinearGradient(0, -H * 0.22, 0, H * 0.22);
+        band.addColorStop(0, 'rgba(200,190,255,0)'); band.addColorStop(0.5, 'rgba(210,200,255,0.14)'); band.addColorStop(1, 'rgba(200,190,255,0)');
+        x.fillStyle = band; x.fillRect(-W, -H * 0.22, W * 2, H * 0.44);
+        for (var mw = 0; mw < 2600; mw++) {
+          var off = (r() + r() + r() - 1.5) * H * 0.18;
+          x.globalAlpha = 0.08 + r() * 0.35; x.fillStyle = r() > 0.8 ? '#ffd9c0' : '#dfe6ff';
+          x.fillRect((r() - 0.5) * W * 1.6, off, 1.6 * W / 1920 + 0.4, 1.6 * W / 1920 + 0.4);
+        }
+        x.restore();
+        for (var st = 0; st < 700; st++) {
+          var sz = r() < 0.04 ? 2.6 : 1.2;
+          x.globalAlpha = 0.3 + r() * 0.7; x.fillStyle = '#ffffff';
+          x.beginPath(); x.arc(r() * W, r() * H * 0.8, Math.max(0.5, sz * (W / 1920)), 0, 6.28); x.fill();
+        }
+        x.globalAlpha = 1;
+        ridge(H * 0.86, H * 0.05, '#080a14', 3, 0);
+        for (var sp = 0; sp < 14; sp++) pine(r() * W, H * 0.9, H * (0.1 + r() * 0.12), '#05060c');
+        break;
+      case 'colorfield':
+        var fields = pick([['#7a2f2a', '#c76b3c', '#e3b16a'], ['#1f3b4d', '#5d8aa8', '#cfd8d6'], ['#3d3a5c', '#8a6a9a', '#e0b8a8'],
+          ['#2f4a3a', '#8aa37a', '#e8dcb0'], ['#5a2a3a', '#b4566a', '#f0c4a8'], ['#2a2a2a', '#7a6a5a', '#d8c8a8']]);
+        x.fillStyle = mixHex(fields[0], '#000000', 0.25); x.fillRect(0, 0, W, H);
+        var mg = H * 0.1, rows = 2 + Math.floor(r() * 2), gapf = H * 0.05, rh = (H - 2 * mg - gapf * (rows - 1)) / rows;
+        for (var ri = 0; ri < rows; ri++) {
+          var colr = fields[(ri + 1) % fields.length];
+          for (var pass = 0; pass < 14; pass++) {
+            var j = H * 0.012;
+            x.globalAlpha = 0.09; x.fillStyle = colr;
+            x.fillRect(W * 0.14 + (r() - 0.5) * j, mg + ri * (rh + gapf) + (r() - 0.5) * j, W * 0.72 + (r() - 0.5) * j, rh + (r() - 0.5) * j);
+          }
+          x.globalAlpha = 0.85; x.fillRect(W * 0.15, mg + ri * (rh + gapf) + H * 0.01, W * 0.7, rh - H * 0.02);
+        }
+        x.globalAlpha = 1;
+        break;
+      default: // bauhaus
+        var pal = pick([['#efe6d4', '#c8553d', '#e2a545', '#2f4858', '#86a397'], ['#f1e9db', '#a33b2c', '#d9b25c', '#1e3d4c', '#c9a690'],
+          ['#ece4d0', '#d1774f', '#3f5e5a', '#e8b34a', '#2b2b2b']]);
+        x.fillStyle = pal[0]; x.fillRect(0, 0, W, H);
+        var cols = 4, rws = 2, pad = H * 0.08, cw = (W - pad * 2) / cols, ch = (H - pad * 2) / rws;
+        for (var gy = 0; gy < rws; gy++) for (var gx = 0; gx < cols; gx++) {
+          var X0 = pad + gx * cw, Y0 = pad + gy * ch, s2 = Math.min(cw, ch);
+          x.save(); x.beginPath(); x.rect(X0, Y0, cw, ch); x.clip();
+          x.fillStyle = pal[1 + Math.floor(r() * 4)]; x.fillRect(X0, Y0, cw, ch);
+          x.fillStyle = pal[1 + Math.floor(r() * 4)];
+          var shape = Math.floor(r() * 4);
+          x.beginPath();
+          if (shape === 0) x.arc(X0 + cw / 2, Y0 + ch / 2, s2 * 0.36, 0, Math.PI * 2);
+          else if (shape === 1) { x.moveTo(X0, Y0 + ch); x.arc(X0, Y0 + ch, s2 * 0.9, -Math.PI / 2, 0); }
+          else if (shape === 2) { x.arc(X0 + cw / 2, Y0 + ch, cw / 2, Math.PI, 0); }
+          else { x.rect(X0 + cw * 0.15, Y0, cw * 0.18, ch); x.rect(X0 + cw * 0.5, Y0, cw * 0.18, ch); }
+          x.fill(); x.restore();
+        }
+    }
+    // Canvas grain and a soft vignette, so it reads as a print rather than a screen.
+    var g2 = document.createElement('canvas'); g2.width = g2.height = 128;
+    var gx2 = g2.getContext('2d'), id = gx2.createImageData(128, 128);
+    for (var q = 0; q < id.data.length; q += 4) { var v = 110 + r() * 40; id.data[q] = id.data[q + 1] = id.data[q + 2] = v; id.data[q + 3] = 40; }
+    gx2.putImageData(id, 0, 0);
+    x.globalAlpha = 0.5; x.fillStyle = x.createPattern(g2, 'repeat'); x.fillRect(0, 0, W, H);
+    var vg = x.createRadialGradient(W / 2, H / 2, H * 0.4, W / 2, H / 2, W * 0.7);
+    vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.25)');
+    x.globalAlpha = 1; x.fillStyle = vg; x.fillRect(0, 0, W, H);
+    return c;
+  }
+
+  var genCache = {}, genOrder = [];
+  function isGen(u) { return typeof u === 'string' && u.indexOf('gen:') === 0; }
+  function genSrc(spec) {
+    if (genCache[spec]) return Promise.resolve(genCache[spec]);
+    return new Promise(function (resolve, reject) {
+      try {
+        var parts = spec.split(':'), small = parts[3] === 't';
+        var c = paintStudio(parts[1], +parts[2], small ? 480 : 1920, small ? 270 : 1080);
+        var keep = function (u) {
+          genCache[spec] = u; genOrder.push(spec);
+          if (genOrder.length > 60) {
+            var old = genOrder.shift();
+            if (genCache[old] && genCache[old].indexOf('blob:') === 0) URL.revokeObjectURL(genCache[old]);
+            delete genCache[old];
+          }
+          resolve(u);
+        };
+        if (c.toBlob) c.toBlob(function (b) { keep(b ? URL.createObjectURL(b) : c.toDataURL('image/jpeg', 0.92)); }, 'image/jpeg', 0.92);
+        else keep(c.toDataURL('image/jpeg', 0.92));
+      } catch (e) { reject(e); }
+    });
+  }
+
+  function startStudioSet(th) {
+    var n = S.settings.aiCount || 8, now = new Date();
+    var set = { id: String(now.getTime()), name: th.name, style: 'Studio art', created: now.getTime(), items: [], studio: true };
+    for (var i = 0; i < n; i++) {
+      var spec = 'gen:' + th.type + ':' + Math.floor(Math.random() * 1e9);
+      set.items.push({ id: 'st:' + set.id + ':' + i, title: th.name + ' no. ' + (i + 1), artist: 'Studio art, drawn on your TV',
+        date: now.toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' }), source: 'Studio art',
+        thumb: spec + ':t', full: spec, ar: 16 / 9, ai: true });
+    }
+    S.aiSets.unshift(set); saveAiSets();
+    toast('“' + th.name + '” is ready: ' + n + ' new pictures.');
+    renderTab('ai', false);
+    var tr = $('#aiset-' + set.id);
+    focusEl(tr ? $('.card', tr) : null);
+  }
+
+  /* ---------------- AI Art ---------------- */
+  // New paintings generated on a theme by Pollinations.ai (free, no account). The free service
+  // allows about one image every 15 seconds, so a set is painted one picture at a time.
+  var AI_THEMES = [
+    { name: 'Tuscan villas at sunset', prompt: 'a Tuscan villa terrace overlooking rolling hills, cypress trees and vineyards', bg: ['#8a5a32', '#2e1d10'] },
+    { name: 'Peaceful seaside mornings', prompt: 'a calm seaside at dawn with gentle waves and a quiet shoreline', bg: ['#3f6a80', '#14232b'] },
+    { name: 'Mountain lakes', prompt: 'a still alpine lake surrounded by pine forests and snowy mountains', bg: ['#3f6158', '#13201d'] },
+    { name: 'Gardens in bloom', prompt: 'a lush flower garden in full bloom with winding paths', bg: ['#6a4a5e', '#24171f'] },
+    { name: 'Cozy winter cabins', prompt: 'a cozy log cabin in a snowy forest with warm glowing windows', bg: ['#4a5566', '#171b22'] },
+    { name: 'Autumn countryside', prompt: 'rolling autumn countryside with golden trees, a stone wall and a winding lane', bg: ['#8a5a28', '#2b1b0c'] },
+    { name: 'Lighthouses and coasts', prompt: 'a lighthouse on a rocky coastline with crashing waves', bg: ['#3d5a70', '#121c24'] },
+    { name: 'Japanese gardens', prompt: 'a serene Japanese garden with a koi pond, maple trees and a wooden bridge', bg: ['#6a3a32', '#241310'] },
+    { name: 'Holy Land landscapes', prompt: 'the hills and ancient stone villages of the Holy Land with olive trees', bg: ['#7a6440', '#2a2214'] },
+    { name: 'Wildflower meadows', prompt: 'a sunlit wildflower meadow with distant hills', bg: ['#5e6a3a', '#1f2412'] },
+    { name: 'Paris in the rain', prompt: 'a Paris street on a rainy evening with glowing cafes and reflections', bg: ['#4a4a5e', '#18181f'] },
+    { name: 'Abstract color fields', prompt: 'soft abstract color fields with layered translucent shapes', bg: ['#6a4040', '#241515'] }
+  ];
+  var AI_STYLES = [
+    { id: 'oil', name: 'Oil painting', text: 'oil painting on canvas, rich brushwork, museum quality, warm natural light' },
+    { id: 'impressionist', name: 'Impressionist', text: 'impressionist painting, visible brushstrokes, luminous color, 19th-century French style' },
+    { id: 'watercolor', name: 'Watercolor', text: 'delicate watercolor painting on textured paper, soft washes of color' },
+    { id: 'pastel', name: 'Soft pastel', text: 'soft pastel artwork, gentle muted palette, dreamy light' },
+    { id: 'photo', name: 'Fine-art photo', text: 'fine art landscape photograph, natural light, high detail' },
+    { id: 'minimal', name: 'Minimalist', text: 'minimalist modern art print, simple shapes, calm muted palette' }
+  ];
+  var AI_VARIATIONS = ['at golden hour', 'in soft morning light', 'wide panoramic view', 'with gentle mist',
+    'in late afternoon light', 'under a dramatic sky', 'seen from a quiet path', 'in the blue hour at dusk',
+    'in early spring', 'on a bright clear day', 'with soft clouds', 'framed by trees'];
+
+  S.aiSets = store.get('aisets', []);
+  S.gen = null;
+  function saveAiSets() { store.set('aisets', S.aiSets.slice(0, 30)); }
+  function aiStyle(id) { return AI_STYLES.filter(function (x) { return x.id === id; })[0] || AI_STYLES[0]; }
+  function aiUrl(prompt, seed) {
+    var key = S.settings.aiKey;
+    if (key) return 'https://gen.pollinations.ai/image/' + enc(prompt) + '?width=1920&height=1080&seed=' + seed +
+      '&model=flux&nologo=true&safe=true&key=' + enc(key);
+    return 'https://image.pollinations.ai/prompt/' + enc(prompt) + '?width=1920&height=1080&seed=' + seed + '&nologo=true&safe=true';
+  }
+  function aiGap() { return S.settings.aiKey ? 3000 : 48000; }          // free tier: one picture every 45 seconds
+  // The free service sometimes sends a yellow "Free limit reached" notice instead of a picture. Spot it.
+  function isLimitNotice(url) {
+    return new Promise(function (resolve) {
+      var im = new Image(), done = false;
+      var t = setTimeout(function () { fin(false); }, 15000);
+      function fin(v) { if (!done) { done = true; clearTimeout(t); resolve(v); } }
+      im.crossOrigin = 'anonymous';
+      im.onload = function () {
+        try {
+          var c = document.createElement('canvas'); c.width = 32; c.height = 18;
+          var x = c.getContext('2d'); x.drawImage(im, 0, 0, 32, 18);
+          var d = x.getImageData(0, 0, 32, 18).data, hit = 0, n = 0;
+          for (var i = 0; i < d.length; i += 4) {
+            n++;
+            if (d[i] > 165 && d[i] < 235 && d[i + 1] > 140 && d[i + 1] < 205 && d[i + 2] > 55 && d[i + 2] < 130 && d[i] - d[i + 2] > 70) hit++;
+          }
+          fin(hit / n > 0.45);
+        } catch (e) { fin(false); }
+      };
+      im.onerror = function () { fin(false); };
+      im.src = url;
+    });
+  }
+  function cap(t) { return t.charAt(0).toUpperCase() + t.slice(1); }
+
+  // Waits for one generated picture; generation can take a while, so allow up to 2 minutes.
+  function genLoad(url) {
+    return new Promise(function (resolve, reject) {
+      var im = new Image(), done = false;
+      var t = setTimeout(function () { if (!done) { done = true; im.src = ''; reject(new Error('timeout')); } }, 120000);
+      im.onload = function () { if (done) return; done = true; clearTimeout(t); im.naturalWidth > 1 ? resolve(im) : reject(new Error('empty')); };
+      im.onerror = function () { if (done) return; done = true; clearTimeout(t); reject(new Error('load')); };
+      im.src = url;
+    });
+  }
+  function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+  function startAiSet(theme, prompt) {
+    if (S.gen && S.gen.running) { toast('Still painting “' + S.gen.set.name + '”. Stop it first, or wait for it to finish.'); return; }
+    var st = aiStyle(S.settings.aiStyle), n = S.settings.aiCount || 8, now = new Date();
+    var set = { id: String(now.getTime()), name: theme, style: st.name, created: now.getTime(), items: [] };
+    S.aiSets.unshift(set);
+    saveAiSets();
+    var gen = S.gen = { set: set, total: n, done: 0, running: true, stop: false };
+    var vars = AI_VARIATIONS.slice().sort(function () { return Math.random() - 0.5; });
+    var i = 0, fails = 0;
+    toast('Painting ' + n + ' new pictures of “' + theme + '”. This takes a few minutes.');
+    function next() {
+      if (gen.stop || i >= n) return finish();
+      var v = vars[i % vars.length], seed = Math.floor(Math.random() * 1e9), t0 = Date.now();
+      var full = prompt + ', ' + v + ', ' + st.text + ', no text, no letters, no signature, no frame, no border';
+      var url = aiUrl(full, seed);
+      renderAiStatus();
+      genLoad(url).then(function (im) {
+        return isLimitNotice(url).then(function (limited) {
+          if (limited) throw new Error('limit');
+          return im;
+        });
+      }).then(function (im) {
+        if (gen.stop) return;
+        var art = {
+          id: 'ai:' + set.id + ':' + i, title: theme + ', ' + v, artist: st.name + ' · AI generated',
+          date: now.toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' }),
+          source: 'AI Art (Pollinations)', thumb: url, full: url, ar: im.naturalWidth / im.naturalHeight, ai: true
+        };
+        set.items.push(art); saveAiSets();
+        gen.done++; i++; fails = 0;
+        addAiCard(set, art);
+        return wait(Math.max(0, aiGap() - (Date.now() - t0)));
+      }, function (err) {
+        fails++;
+        if (err && err.message === 'limit') gen.limited = (gen.limited || 0) + 1;
+        if (gen.limited >= 3) { gen.stop = true; gen.limitStop = true; return; }
+        if (fails >= 3) { i++; fails = 0; }          // skip this one after three tries
+        return wait(aiGap() + 4000);
+      }).then(next);
+    }
+    function finish() {
+      gen.running = false;
+      if (!set.items.length) {
+        S.aiSets = S.aiSets.filter(function (x) { return x !== set; }); saveAiSets();
+        toast(gen.limitStop ? 'The free AI service’s limit was reached. Add a free key, or try Studio art.' :
+          gen.stop ? 'Stopped.' : 'The AI art service isn’t responding right now. Please try again later.');
+      } else if (gen.limitStop) {
+        toast('Saved ' + set.items.length + ' pictures. The free limit was reached; a free key makes this faster.');
+      } else {
+        toast((gen.stop ? 'Stopped. ' : '') + '“' + theme + '” is ready: ' + set.items.length + ' new pictures.');
+      }
+      renderAiStatus();
+      if (S.menuOpen && S.tab === 'ai' && !S.sub) renderTab('ai', false);
+    }
+    next();
+    if (S.menuOpen && S.tab === 'ai') renderTab('ai', false);
+  }
+
+  function renderAiStatus() {
+    var el = $('#aiStatus');
+    if (!el) return;
+    var g = S.gen;
+    if (g && g.running) {
+      el.textContent = 'Painting “' + g.set.name + '”: ' + g.done + ' of ' + g.total + ' done. You can keep browsing or go back to your art.';
+    } else {
+      el.textContent = S.settings.aiKey ? 'Your free key is set, so each AI picture takes a few seconds.' :
+        'Without a key, the free AI service allows one picture every 45 seconds. Studio art is instant and unlimited.';
+    }
+    var stop = $('#aiStop');
+    if (stop) stop.style.display = (g && g.running) ? '' : 'none';
+  }
+  function addAiCard(set, art) {
+    var track = $('#aiset-' + set.id);
+    if (!track) return;
+    $$('.skeleton', track).slice(0, 1).forEach(function (sk) { sk.remove(); });
+    var more = $('.card.more', track);
+    track.insertBefore(card(art, set.items), more || null);
+  }
+
+  function renderAi(p) {
+    var stop = button('Stop painting', '', function () { if (S.gen) S.gen.stop = true; toast('Stopping after the current picture…'); });
+    stop.id = 'aiStop';
+    p.appendChild(viewHead('AI Art', 'Brand-new pictures on a theme you choose, made to fit your TV exactly.', [stop]));
+    var status = h('div', 'status music-status'); status.id = 'aiStatus';
+    p.appendChild(status);
+
+    var opts = h('div', 'settings');
+    opts.appendChild(stepperEl({ label: 'Art style', values: AI_STYLES.map(function (x) { return x.id; }), fmt: function (v) { return aiStyle(v).name; } },
+      function () { return S.settings.aiStyle; }, function (v) { S.settings.aiStyle = v; saveSettings(); }));
+    opts.appendChild(stepperEl({ label: 'Pictures per set', values: [4, 8, 12],
+      fmt: function (v) { return v + ' pictures' + (S.settings.aiKey ? '' : ' (AI: about ' + Math.ceil(v * 50 / 60) + ' min)'); } },
+      function () { return S.settings.aiCount; }, function (v) { S.settings.aiCount = v; saveSettings(); }));
+    var keyRow = h('div', 'stepper focusable'); keyRow.tabIndex = -1;
+    var kl = h('span', 'lbl', 'Free Pollinations key'); kl.appendChild(h('span', 'hint', 'Optional. Makes AI pictures much faster and removes the watermark'));
+    keyRow.appendChild(kl); keyRow.appendChild(h('span', 'val', S.settings.aiKey ? 'Set ✓' : 'Not set'));
+    keyRow._activate = keyRow.onclick = openAiKey;
+    opts.appendChild(keyRow);
+    p.appendChild(opts);
+
+    p.appendChild(h('div', 'group-title', 'Studio art: instant and unlimited, drawn right on your TV'));
+    var gs = h('div', 'grid');
+    STUDIO_THEMES.forEach(function (t) {
+      gs.appendChild(musicTile(t.name, t.note, t.bg, '', function () { startStudioSet(t); }));
+    });
+    p.appendChild(gs);
+
+    p.appendChild(h('div', 'group-title', 'AI paintings from the internet (Pollinations)'));
+    var g = h('div', 'grid');
+    g.appendChild(musicTile('Your own theme', 'Type anything: “our lake house in fall”', ['#4a4741', '#1c1b19'], '', openAiCustom));
+    AI_THEMES.forEach(function (t) {
+      g.appendChild(musicTile(t.name, 'Paint a new set', t.bg, '', function () { startAiSet(t.name, t.prompt); }));
+    });
+    p.appendChild(g);
+
+    if (S.aiSets.length) p.appendChild(h('div', 'group-title', 'Your AI collections'));
+    S.aiSets.forEach(function (set) {
+      var row = h('section', 'row'), title = h('h2', null, set.name);
+      title.appendChild(h('small', null, set.style + ' · ' + new Date(set.created).toLocaleDateString([], { month: 'short', day: 'numeric' }) +
+        ' · ' + set.items.length + ' pictures'));
+      row.appendChild(title);
+      var scroll = h('div', 'row-scroll'), track = h('div', 'row-track');
+      track.id = 'aiset-' + set.id;
+      set.items.forEach(function (a) { track.appendChild(card(a, set.items)); });
+      var g2 = S.gen;
+      if (g2 && g2.running && g2.set === set) track.appendChild(skeletons(g2.total - g2.done));
+      track.appendChild(tileCard('more', '▶', 'Play this set', function () { playList(set.items.slice(), set.name); }));
+      track.appendChild(tileCard('more', '✕', 'Delete this set', function () {
+        if (S.gen && S.gen.running && S.gen.set === set) S.gen.stop = true;
+        S.aiSets = S.aiSets.filter(function (x) { return x !== set; }); saveAiSets();
+        toast('Deleted “' + set.name + '”');
+        renderTab('ai', true);
+      }));
+      scroll.appendChild(track); row.appendChild(scroll); p.appendChild(row);
+    });
+    renderAiStatus();
+  }
+
+  function openAiKey() {
+    S.sub = { type: 'aikey' }; S.renderSeq++;
+    var p = $('#panel');
+    p.innerHTML = ''; p.scrollTop = 0;
+    var url = native('uploadUrl');
+    p.appendChild(viewHead('Free Pollinations key', 'With a free account, AI pictures take seconds instead of a minute each, without the watermark.'));
+    var steps = h('div', 'steps');
+    steps.appendChild(h('p', null, '1. On your phone or computer, go to enter.pollinations.ai and sign up for free.'));
+    steps.appendChild(h('p', null, '2. Create an API key there and copy it.'));
+    steps.appendChild(h('p', null, url ? '3. Easiest: on your phone, open ' + url + '/key and paste the key there. Or type it below.' :
+      '3. Paste the key below.'));
+    p.appendChild(steps);
+    var wrap = h('div', 'search-wrap'), inp = document.createElement('input');
+    inp.type = 'text'; inp.className = 'search focusable'; inp.placeholder = 'Paste or type your key';
+    inp.value = S.settings.aiKey || '';
+    var save = button('Save key', 'primary', function () {
+      var k = inp.value.trim();
+      if (k && !/^[A-Za-z0-9_\-]{8,200}$/.test(k)) { toast('That doesn’t look like a Pollinations key'); return; }
+      window.onAiKey(k);
+      renderTab('ai', true);
+    });
+    wrap.appendChild(inp); wrap.appendChild(save);
+    p.appendChild(wrap);
+    if (S.settings.aiKey) {
+      var rm = button('Remove key', 'danger', function () { window.onAiKey(''); renderTab('ai', true); });
+      rm.style.marginLeft = '0';
+      p.appendChild(rm);
+    }
+    inp._activate = function () { inp.focus(); inp.click(); };
+    focusEl(inp);
+  }
+  window.onAiKey = function (k) {
+    S.settings.aiKey = k || '';
+    saveSettings();
+    toast(k ? 'Key saved. AI pictures will now be much faster.' : 'Key removed.');
+    if (S.menuOpen && S.tab === 'ai' && !S.sub) renderTab('ai', false);
+  };
+
+  function openAiCustom() {
+    S.sub = { type: 'aicustom' }; S.renderSeq++;
+    var p = $('#panel');
+    p.innerHTML = ''; p.scrollTop = 0;
+    p.appendChild(viewHead('Your own theme', 'Describe the scene you’d like. For example: “a red barn in a snowy field”, “sailboats in a harbor at dusk”.'));
+    var wrap = h('div', 'search-wrap'), inp = document.createElement('input');
+    inp.type = 'text'; inp.className = 'search focusable'; inp.placeholder = 'Describe a scene';
+    inp.setAttribute('enterkeyhint', 'go');
+    var go = button('Paint it', 'primary', run);
+    wrap.appendChild(inp); wrap.appendChild(go);
+    p.appendChild(wrap);
+    p.appendChild(h('div', 'status', 'Style: ' + aiStyle(S.settings.aiStyle).name + ' · ' + S.settings.aiCount + ' pictures. Change these on the AI Art page.'));
+    inp._activate = function () { inp.focus(); inp.click(); };
+    inp.addEventListener('keydown', function (e) {
+      if (e.keyCode === 13 && inp.value.trim()) { e.preventDefault(); e.stopPropagation(); run(); }
+    });
+    function run() {
+      var q = inp.value.trim().slice(0, 200);
+      if (!q) { inp.focus(); return; }
+      inp.blur();
+      renderTab('ai', true);
+      startAiSet(cap(q), q);
+    }
+    focusEl(inp);
+  }
 
   /* ---------------- Background music ---------------- */
   // Free, music-only internet radio. Each style has hand-picked stations, plus a fallback
@@ -1650,6 +2387,8 @@
     noteActivity();
     musicUnblock();
     if (S.sleeping) { wake(); return true; }
+    var typing = document.activeElement && document.activeElement.tagName === 'INPUT';
+    if (typing && ['up', 'down', 'ok', 'back'].indexOf(k) < 0) return false;   // let letters reach the text box
     if (k === 'back') { if (!window.handleBack()) exitApp(); return true; }
     if (k === 'menu') { window.onRemote('menu'); return true; }
     if (k === 'playpause' || k === 'prev' || k === 'next') { window.onRemote(k); return true; }
@@ -1679,9 +2418,12 @@
     else if (m.remote) window.onRemote(m.remote);
     else if (m.photos) {
       m.photos.forEach(function (p) {
-        S.simPhotos.unshift({ name: p.name, url: p.url, thumb: p.url, time: Date.now() });
+        var nm = 'sim-' + Date.now() + '-' + Math.floor(Math.random() * 1e6) + '-' + p.name;
+        S.simPhotos.unshift({ name: nm, url: p.url, thumb: p.url, time: Date.now() });
+        if (m.album) { var al = newAlbum(m.album); if (al) al.photos.unshift(nm); }
       });
-      window.onPhotosChanged();
+      saveAlbums();
+      window.onPhotosChanged(null, null);
     } else if (m.reset) {
       try { Object.keys(localStorage).forEach(function (k) { if (k.indexOf('atelier.') === 0) localStorage.removeItem(k); }); } catch (x) {}
       location.reload();
@@ -1699,6 +2441,7 @@
 
   function init() {
     applyDisplay();
+    saveAlbums();
     if (S.settings.musicSource === 'free') musicStart(false);
     refreshPhotos();
     tickClock();

@@ -1,8 +1,8 @@
 # Atelier: Art Mode for Fire TV
 
-A Fire TV app that turns your TV into a framed artwork, modelled on how Samsung's Frame TV Art Mode works: an Art Store of collections, your own photos, digital mats in several styles and colours, brightness and colour-tone controls, a slideshow, sleep timer and night dimming.
+A Fire TV app that turns your TV into a framed artwork, modeled on how Samsung's Frame TV Art Mode works: an Art Store of collections, your own photos, digital mats in several styles and colors, brightness and color-tone controls, a slideshow, sleep timer and night dimming.
 
-All artwork comes from free, open-access museum programmes (public domain / CC0):
+All artwork comes from free, open-access museum programs (public domain / CC0):
 the Art Institute of Chicago, the Cleveland Museum of Art and The Metropolitan Museum of Art. No API keys needed.
 
 ## Build the APK with GitHub (no software needed)
@@ -55,13 +55,16 @@ Remote in Art Mode:
 - Back twice: leave Art Mode
 
 Menu tabs:
-- Art Store: 13 curated collections plus search across the museum archives. Open any work to preview it on a mat, pick a mat style and colour for that work, favourite it, or put it on the wall. Each collection has Play this collection.
-- My Photos: choose Add from phone, scan the QR code (phone must be on the same Wi-Fi), pick photos and tap Send. They're resized to 4K on the phone and appear on the TV within seconds.
-- Favourites: your own gallery.
+- Art Store: 13 curated collections plus search across the museum archives. Open any work to preview it on a mat, pick a mat style and color for that work, favorite it, or put it on the wall. Each collection has Play this collection.
+- My Photos: group photos into albums (New album, Add or remove photos, Rename, Delete) and play just one album; the slideshow keeps following the album as you add photos. Choose Add from phone, scan the QR code (phone must be on the same Wi-Fi), pick photos (and, optionally, an album) and tap Send. They're resized to 4K on the phone and appear on the TV within seconds.
+- Favorites: your own gallery.
+- AI Art: two ways to get brand-new pictures, always exactly TV-shaped and saved as collections you can play.
+  - Studio art: nine themes (mountain sunsets, misty mountains, ocean horizons, Tuscan hills, desert dunes, pine forests in fog, starry nights, color fields, Bauhaus geometry) drawn by code right on the TV. Instant, unlimited, no internet service.
+  - AI paintings: 12 themes or any theme you type, in six styles, from the free Pollinations.ai service. Without an account it allows one picture every 45 seconds; a free key from enter.pollinations.ai (entered on the TV or from your phone at http://<tv-ip>:8765/key) makes it fast. The app detects the service's "Free limit reached" notice and never saves it as art. Personal, non-commercial use.
 - Music: free background music in nine styles (classical, solo piano, jazz, ambient, chill and lo-fi, acoustic and folk, lounge, hymns and worship, easy listening) from free internet radio, with automatic fallback to another station if one is down. Or choose Spotify, Amazon Music or Apple Music: Atelier opens the app, you start your music, then return to Atelier and it keeps playing while Atelier stays silent.
-- Settings: brightness, colour tone (cool to warm), matte finish, frame bezel, default mat, slideshow interval, play from, order, art info, sleep after, night mode.
+- Settings: brightness, color tone (cool to warm), matte finish, frame bezel, default mat, slideshow interval, play from, order, art info, sleep after, night mode.
 
-Mat styles: None (full screen), Modern, Shadowbox, Panoramic, Triptych, Mix (three works together). Twelve mat colours. Mats are remembered per artwork.
+Mat styles: None (full screen), Modern, Shadowbox, Panoramic, Triptych, Mix (three works together). Twelve mat colors. Mats are remembered per artwork.
 
 Frame bezel draws a white, beige, teak, walnut or black picture-frame border on screen, for TVs that don't have one physically.
 
@@ -77,7 +80,7 @@ To restore Amazon's screensaver:
 ```
 adb shell settings put secure screensaver_components com.amazon.bueller.photos/.daydream.ScreenSaverService
 ```
-Fire OS updates sometimes reset this setting; just run the command again. The screensaver uses your current art, mats, favourites and slideshow settings (it rotates every 10 minutes if Change every is off).
+Fire OS updates sometimes reset this setting; just run the command again. The screensaver uses your current art, mats, favorites and slideshow settings (it rotates every 10 minutes if Change every is off).
 
 ## What can't be copied from the real thing
 
